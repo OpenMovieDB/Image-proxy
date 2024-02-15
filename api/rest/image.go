@@ -6,12 +6,15 @@ import (
 	"github.com/gofiber/fiber/v2/log"
 	"github.com/gofrs/uuid"
 	"resizer/api/model"
+	"resizer/service"
 )
 
-type ImageController struct{}
+type ImageController struct {
+	service *service.ImageService
+}
 
-func NewImageController(app *fiber.App) *ImageController {
-	i := &ImageController{}
+func NewImageController(app *fiber.App, service *service.ImageService) *ImageController {
+	i := &ImageController{service: service}
 
 	app.Get("/images/:id/:image_id", i.Image)
 
