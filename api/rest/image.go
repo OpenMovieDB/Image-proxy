@@ -3,8 +3,6 @@ package rest
 import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
-	"github.com/gofrs/uuid"
 	"resizer/api/model"
 	"resizer/service"
 )
@@ -16,28 +14,31 @@ type ImageController struct {
 func NewImageController(app *fiber.App, service *service.ImageService) *ImageController {
 	i := &ImageController{service: service}
 
-	app.Get("/images/:id/:image_id", i.Image)
+	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
 
 	return i
 }
 
-func (i *ImageController) Image(c *fiber.Ctx) error {
-	movieID, err := c.ParamsInt("id")
+func (i *ImageController) Process(c *fiber.Ctx) error {
+	params := &model.ImageRequest{
+		EntityID: c.Params("entity_id"),
+		FileID:   c.Params("file_id"),
+		Width:    c.Params("width"),
+		Quality:  c.Params("quality"),
+		Type:     c.Params("type"),
+	}
+
+	fmt.Println(fmt.Sprintf("params: %++v", params))
+
+	image, err := i.service.Process(*params)
 	if err != nil {
-		log.Error(err)
 		return err
 	}
 
-	imageID, err := uuid.FromString(c.Params("image_id"))
-	if err != nil {
-		log.Error(err)
-		return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("invalid image id: %s", c.Params("image_id")))
-	}
+	c.Type(image.Type)
+	c.Set("Content-Length", fmt.Sprintf("%d", image.ContentLength))
+	c.Set("Content-Disposition", image.ContentDisposition)
+	c.Set("Cache-Control", "public, max-age=31536000")
 
-	params := &model.ImageRequest{}
-	if err := c.QueryParser(params); err != nil {
-		return err
-	}
-
-	return nil
+	return c.SendStream(image.Body)
 }

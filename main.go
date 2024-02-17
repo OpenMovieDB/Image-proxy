@@ -15,7 +15,7 @@ import (
 
 func main() {
 	serviceConfig := config.New()
-	app := fiber.New(fiber.Config{AppName: "OpenMovieDb Image proxy"})
+	app := fiber.New(fiber.Config{AppName: "OpenMovieDb Process proxy"})
 
 	awsSession, err := session.NewSession(&aws.Config{
 		Region:      aws.String(serviceConfig.S3Region),
@@ -28,7 +28,7 @@ func main() {
 		panic("Failed to create aws session")
 	}
 
-	imageService := service.NewImageService(s3.New(awsSession))
+	imageService := service.NewImageService(s3.New(awsSession), serviceConfig)
 
 	rest.NewImageController(app, imageService)
 
