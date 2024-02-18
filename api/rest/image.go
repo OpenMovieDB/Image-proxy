@@ -3,8 +3,10 @@ package rest
 import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
+	"log/slog"
 	"resizer/api/model"
 	"resizer/service"
+	"strconv"
 )
 
 type ImageController struct {
@@ -20,11 +22,23 @@ func NewImageController(app *fiber.App, service *service.ImageService) *ImageCon
 }
 
 func (i *ImageController) Process(c *fiber.Ctx) error {
+	width, err := c.ParamsInt("width")
+	if err != nil {
+		slog.Error(err.Error())
+		return err
+	}
+
+	quality, err := strconv.ParseFloat(c.Params("quality"), 32)
+	if err != nil {
+		slog.Error(err.Error())
+		return err
+	}
+
 	params := &model.ImageRequest{
 		EntityID: c.Params("entity_id"),
 		FileID:   c.Params("file_id"),
-		Width:    c.Params("width"),
-		Quality:  c.Params("quality"),
+		Width:    width,
+		Quality:  float32(quality),
 		Type:     c.Params("type"),
 	}
 
@@ -36,7 +50,6 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	}
 
 	c.Type(image.Type)
-	c.Set("Content-Length", fmt.Sprintf("%d", image.ContentLength))
 	c.Set("Content-Disposition", image.ContentDisposition)
 	c.Set("Cache-Control", "public, max-age=31536000")
 
