@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
+	"resizer/converter"
 	"resizer/service"
 )
 
@@ -28,7 +29,9 @@ func main() {
 		panic("Failed to create aws session")
 	}
 
-	imageService := service.NewImageService(s3.New(awsSession), serviceConfig)
+	converterStrategy := converter.MustStrategy()
+
+	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy)
 
 	rest.NewImageController(app, imageService)
 

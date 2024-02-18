@@ -1,25 +1,26 @@
 package service
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"golang.org/x/image/webp"
-	"image/png"
-	"io"
+	"github.com/disintegration/imaging"
+	"image"
 	"log/slog"
 	"resizer/api/model"
 	"resizer/config"
+	"resizer/converter"
 )
 
 type ImageService struct {
 	config *config.Config
 
 	s3 *s3.S3
+
+	converter *converter.StrategyImpl
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config) *ImageService {
-	return &ImageService{s3: s3, config: c}
+func NewImageService(s3 *s3.S3, c *config.Config, converter *converter.StrategyImpl) *ImageService {
+	return &ImageService{s3: s3, config: c, converter: converter}
 }
 
 func (i *ImageService) Process(params model.ImageRequest) (*model.ImageResponse, error) {
@@ -36,25 +37,28 @@ func (i *ImageService) Process(params model.ImageRequest) (*model.ImageResponse,
 		return nil, err
 	}
 
-	// Изменение размера изображения и изменение качества
-	img, err := webp.Decode(result.Body)
+	formatType, err := converter.MakeFromString(params.Type)
 	if err != nil {
 		slog.Error(err.Error())
 		return nil, err
 	}
 
-	// конвертация webp в png
-	pngImage := &bytes.Buffer{}
-	png.Encode(pngImage, img)
+	converterStrategy := i.converter.Apply(formatType)
 
-	// io.Writer в io.Reader
-	pngImage1 := io.Reader(pngImage)
+	img, err := converterStrategy.Convert(result.Body, params.Quality, func(img image.Image) (image.Image, error) {
+		width := params.Width
+		height := img.Bounds().Dy() * width / img.Bounds().Dx()
+		return imaging.Resize(img, width, height, imaging.Lanczos), nil
+	})
+	if err != nil {
+		slog.Error(err.Error())
+		return nil, err
+	}
 
 	fileName := fmt.Sprintf("%s.%s", params.FileID, params.Type)
 
 	response := &model.ImageResponse{
-		Body:               pngImage1,
-		ContentLength:      *result.ContentLength,
+		Body:               img,
 		ContentDisposition: fmt.Sprintf("inline; filename=%s", fileName),
 		Type:               params.Type,
 	}
