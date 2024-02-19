@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/Kagami/go-avif v0.1.0 // indirect
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/anthonynsimon/bild v0.13.0 // indirect
 	github.com/chai2010/webp v1.1.1 // indirect

@@ -8,6 +8,7 @@ type Type struct {
 
 var (
 	WEBP = Type{"webp"}
+	AVIF = Type{"avif"}
 )
 
 func (t Type) String() string {
@@ -18,6 +19,8 @@ func MakeFromString(s string) (Type, error) {
 	switch s {
 	case WEBP.s:
 		return WEBP, nil
+	case AVIF.s:
+		return AVIF, nil
 	}
 
 	return Type{}, fmt.Errorf("unknown type: %s", s)

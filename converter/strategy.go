@@ -16,6 +16,7 @@ type StrategyImpl struct {
 func MustStrategy() *StrategyImpl {
 	m := map[Type]Strategy{
 		WEBP: mustWebp(),
+		AVIF: mustAvif(),
 	}
 
 	return &StrategyImpl{
