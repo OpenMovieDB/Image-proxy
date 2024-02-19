@@ -31,7 +31,7 @@ func (w *Webp) Convert(reader io.Reader, quality float32, f func(img image.Image
 		return nil, err
 	}
 
-	if err := webp.Encode(&buf, img, &webp.Options{Lossless: true, Quality: quality}); err != nil {
+	if err := webp.Encode(&buf, img, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
 		slog.Error(err.Error())
 		return nil, err
 	}

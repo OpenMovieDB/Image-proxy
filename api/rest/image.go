@@ -50,6 +50,7 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	}
 
 	c.Type(image.Type)
+	c.Set("Content-Length", fmt.Sprintf("%d", image.ContentLength))
 	c.Set("Content-Disposition", image.ContentDisposition)
 	c.Set("Cache-Control", "public, max-age=31536000")
 
