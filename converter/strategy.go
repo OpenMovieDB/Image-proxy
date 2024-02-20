@@ -17,6 +17,8 @@ func MustStrategy() *StrategyImpl {
 	m := map[Type]Strategy{
 		WEBP: mustWebp(),
 		AVIF: mustAvif(),
+		JPEG: mustJpeg(),
+		PNG:  mustPng(),
 	}
 
 	return &StrategyImpl{

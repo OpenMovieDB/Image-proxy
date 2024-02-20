@@ -9,6 +9,8 @@ type Type struct {
 var (
 	WEBP = Type{"webp"}
 	AVIF = Type{"avif"}
+	JPEG = Type{"jpeg"}
+	PNG  = Type{"png"}
 )
 
 func (t Type) String() string {
@@ -21,6 +23,10 @@ func MakeFromString(s string) (Type, error) {
 		return WEBP, nil
 	case AVIF.s:
 		return AVIF, nil
+	case JPEG.s:
+		return JPEG, nil
+	case PNG.s:
+		return PNG, nil
 	}
 
 	return Type{}, fmt.Errorf("unknown type: %s", s)
