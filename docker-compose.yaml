@@ -1,0 +1,21 @@
+version: '3'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - backend
+    environment:
+      - S3_ACCESS_KEY=cj67YNRH6pUq61v6
+      - S3_BUCKET=r001s-openmoviedb
+      - S3_ENDPOINT=https://s3.elvd.tech
+      - S3_REGION=ru-1
+      - S3_SECRET_KEY=wTDzUCr9V5whiChFnNR6q7PvA78kGgxd
+
+networks:
+  backend:
