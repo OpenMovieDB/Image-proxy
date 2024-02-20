@@ -3,18 +3,20 @@ package rest
 import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
-	"log/slog"
+	"go.uber.org/zap"
 	"resizer/api/model"
 	"resizer/service"
+	"resizer/shared/log"
 	"strconv"
 )
 
 type ImageController struct {
 	service *service.ImageService
+	logger  *zap.Logger
 }
 
-func NewImageController(app *fiber.App, service *service.ImageService) *ImageController {
-	i := &ImageController{service: service}
+func NewImageController(app *fiber.App, service *service.ImageService, logger *zap.Logger) *ImageController {
+	i := &ImageController{service: service, logger: logger}
 
 	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
 
@@ -22,15 +24,18 @@ func NewImageController(app *fiber.App, service *service.ImageService) *ImageCon
 }
 
 func (i *ImageController) Process(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
 	width, err := c.ParamsInt("width")
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error("Error parsing width", zap.Error(err))
 		return err
 	}
 
 	quality, err := strconv.ParseFloat(c.Params("quality"), 32)
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error("Error parsing quality", zap.Error(err))
 		return err
 	}
 
@@ -42,10 +47,11 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 		Type:     c.Params("type"),
 	}
 
-	fmt.Println(fmt.Sprintf("params: %++v", params))
+	logger.Debug(fmt.Sprintf("Processing image with params: %++v", params))
 
-	image, err := i.service.Process(*params)
+	image, err := i.service.Process(ctx, *params)
 	if err != nil {
+		logger.Error("Error processing image", zap.Error(err))
 		return err
 	}
 

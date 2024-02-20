@@ -1,14 +1,16 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/disintegration/imaging"
+	"go.uber.org/zap"
 	"image"
-	"log/slog"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter"
+	"resizer/shared/log"
 )
 
 type ImageService struct {
@@ -17,21 +19,26 @@ type ImageService struct {
 	s3 *s3.S3
 
 	converter *converter.StrategyImpl
+
+	logger *zap.Logger
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config, converter *converter.StrategyImpl) *ImageService {
-	return &ImageService{s3: s3, config: c, converter: converter}
+func NewImageService(s3 *s3.S3, c *config.Config, converter *converter.StrategyImpl, logger *zap.Logger) *ImageService {
+	return &ImageService{s3: s3, config: c, converter: converter, logger: logger}
 }
 
-func (i *ImageService) Process(params model.ImageRequest) (*model.ImageResponse, error) {
-	result, err := i.imageFromS3(params)
+func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	result, err := i.imageFromS3(ctx, params)
 	if err != nil {
+		logger.Error("Error getting image from S3", zap.Error(err))
 		return nil, err
 	}
 
 	formatType, err := converter.MakeFromString(params.Type)
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error("Error converting format type", zap.Error(err))
 		return nil, err
 	}
 
@@ -48,29 +55,35 @@ func (i *ImageService) Process(params model.ImageRequest) (*model.ImageResponse,
 		return img, nil
 	})
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error("Error converting format type", zap.Error(err))
 		return nil, err
 	}
 
-	return &model.ImageResponse{
+	response := &model.ImageResponse{
 		Body:               img,
 		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.FileID, params.Type),
 		Type:               params.Type,
-	}, nil
+	}
+
+	logger.Debug(fmt.Sprintf("Image processed with params: %++v", params))
+
+	return response, nil
 }
 
-func (i *ImageService) imageFromS3(params model.ImageRequest) (*s3.GetObjectOutput, error) {
+func (i *ImageService) imageFromS3(ctx context.Context, params model.ImageRequest) (*s3.GetObjectOutput, error) {
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
 	fileKey := fmt.Sprintf("%s/%s", params.EntityID, params.FileID)
 
-	input := &s3.GetObjectInput{
-		Bucket: &i.config.S3Bucket,
-		Key:    &fileKey,
-	}
+	input := &s3.GetObjectInput{Bucket: &i.config.S3Bucket, Key: &fileKey}
 
 	result, err := i.s3.GetObject(input)
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error(fmt.Sprintf("Error getting object %s from bucket %s", fileKey, i.config.S3Bucket), zap.Error(err))
 		return nil, err
 	}
+
+	logger.Debug(fmt.Sprintf("Image %s fetched from S3", fileKey))
+
 	return result, nil
 }
