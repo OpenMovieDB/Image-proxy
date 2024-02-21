@@ -3,8 +3,8 @@ package rest
 import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/proxy"
 	"go.uber.org/zap"
+	"net/http"
 	"resizer/api/model"
 	"resizer/service"
 	"resizer/shared/log"
@@ -73,12 +73,18 @@ func (i *ImageController) TmdbProxy(c *fiber.Ctx) error {
 
 	logger.Debug(fmt.Sprintf("Proxying image from TMDB with url: %s", url))
 
-	if err := proxy.Do(c, url); err != nil {
+	res, err := http.Get(url)
+	if err != nil {
 		logger.Error("Error proxying image from TMDB", zap.Error(err))
 		return err
 	}
+
+	for k, v := range res.Header {
+		c.Set(k, v[0])
+	}
+
 	c.Response().Header.Del(fiber.HeaderServer)
-	return nil
+	return c.SendStream(res.Body)
 }
 
 func (i *ImageController) KinopoiskProxy(c *fiber.Ctx) error {
@@ -89,10 +95,16 @@ func (i *ImageController) KinopoiskProxy(c *fiber.Ctx) error {
 
 	logger.Debug(fmt.Sprintf("Proxying image from Kinopoisk with url: %s", url))
 
-	if err := proxy.Do(c, url); err != nil {
+	res, err := http.Get(url)
+	if err != nil {
 		logger.Error("Error proxying image from Kinopoisk", zap.Error(err))
 		return err
 	}
+
+	for k, v := range res.Header {
+		c.Set(k, v[0])
+	}
+
 	c.Response().Header.Del(fiber.HeaderServer)
-	return nil
+	return c.SendStream(res.Body)
 }
