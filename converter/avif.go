@@ -36,7 +36,6 @@ func (w *Avif) Convert(ctx context.Context, reader io.Reader, quality float32, f
 		return nil, 0, err
 	}
 
-	// переводим качество из диапазона 0-100 в диапазон 0-63
 	qualityAiff := 63 - int(quality/100*63)
 
 	if err := avif.Encode(&buf, img, &avif.Options{Threads: 0, Speed: 8, Quality: qualityAiff}); err != nil {

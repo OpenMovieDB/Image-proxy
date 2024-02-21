@@ -3,6 +3,7 @@ package rest
 import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/proxy"
 	"go.uber.org/zap"
 	"resizer/api/model"
 	"resizer/service"
@@ -19,6 +20,7 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 	i := &ImageController{service: service, logger: logger}
 
 	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
+	app.Get("/tmdb-images/*", i.TmdbProxy)
 
 	return i
 }
@@ -58,7 +60,22 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	c.Type(image.Type)
 	c.Set("Content-Length", fmt.Sprintf("%d", image.ContentLength))
 	c.Set("Content-Disposition", image.ContentDisposition)
-	c.Set("Cache-Control", "public, max-age=31536000")
 
 	return c.SendStream(image.Body)
+}
+
+func (i *ImageController) TmdbProxy(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	url := "https://www.themoviedb.org/t/p/" + c.Params("*")
+
+	logger.Debug(fmt.Sprintf("Proxying image from TMDB with url: %s", url))
+
+	if err := proxy.Do(c, url); err != nil {
+		logger.Error("Error proxying image from TMDB", zap.Error(err))
+		return err
+	}
+	c.Response().Header.Del(fiber.HeaderServer)
+	return nil
 }

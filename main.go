@@ -88,7 +88,6 @@ func main() {
 	rest.NewImageController(app, imageService, logger)
 
 	if err := app.Listen(":" + serviceConfig.Port); err != nil {
-		logger.Fatal("Error starting server")
 		logger.Panic(err.Error())
 		return
 	}
