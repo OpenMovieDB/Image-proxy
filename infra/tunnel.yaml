@@ -9,7 +9,7 @@ subjects:
     spec:
       fqdn: image.openmoviedb.com
       protocol: https
-      target: http://image-proxy.kinopoisk.svc.cluster.local:3000
+      target: http://image-proxy.kinopoisk.svc.cluster.local:8080
 tunnelRef:
   kind: ClusterTunnel
   name: omdb-tunnel
