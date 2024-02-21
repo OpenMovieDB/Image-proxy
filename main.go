@@ -9,7 +9,13 @@ import (
 	"github.com/gofiber/contrib/fiberzap/v2"
 	"github.com/gofiber/contrib/otelfiber/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cache"
+	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v2/middleware/etag"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
+
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
@@ -17,6 +23,7 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
+	"time"
 )
 
 func main() {
@@ -57,15 +64,29 @@ func main() {
 
 	converterStrategy := converter.MustStrategy()
 
-	app := fiber.New(fiber.Config{AppName: "OpenMovieDb Process proxy"})
-	app.Use(otelfiber.Middleware())
-	app.Use(fiberzap.New(fiberzap.Config{Logger: logger}))
+	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
+	app.Use(
+		recover.New(),
+		otelfiber.Middleware(),
+		fiberzap.New(fiberzap.Config{Logger: logger}),
+		compress.New(compress.Config{Level: compress.LevelBestSpeed}),
+		etag.New(),
+		limiter.New(limiter.Config{
+			Max:               serviceConfig.RateLimitMaxRequests,
+			Expiration:        time.Duration(serviceConfig.RateLimitDurationInSec) * time.Second,
+			LimiterMiddleware: limiter.SlidingWindow{},
+		}),
+		cache.New(cache.Config{
+			Expiration:   time.Duration(serviceConfig.CacheTTLInMin) * time.Minute,
+			CacheControl: true,
+		}),
+	)
 
 	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
 
 	rest.NewImageController(app, imageService, logger)
 
-	if err := app.Listen(":8081"); err != nil {
+	if err := app.Listen(":" + serviceConfig.Port); err != nil {
 		logger.Fatal("Error starting server")
 		logger.Panic(err.Error())
 		return
