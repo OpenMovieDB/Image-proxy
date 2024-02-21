@@ -1,0 +1,15 @@
+apiVersion: networking.cfargotunnel.com/v1alpha1
+kind: TunnelBinding
+metadata:
+  name: image-proxy
+  namespace: kinopoisk
+subjects:
+  - kind: Service
+    name: image-proxy
+    spec:
+      fqdn: image.openmoviedb.com
+      protocol: https
+      target: http://image-proxy.kinopoisk.svc.cluster.local:3000
+tunnelRef:
+  kind: ClusterTunnel
+  name: omdb-tunnel

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: image-proxy
+  namespace: kinopoisk
+spec:
+  selector:
+    app: image-proxy
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000

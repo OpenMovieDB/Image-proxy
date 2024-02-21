@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: image-proxy
+  namespace: kinopoisk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: image-proxy
+  template:
+    metadata:
+      labels:
+        app: image-proxy
+    spec:
+      containers:
+        - name: image-proxy
+          image: mdwit/image-proxy:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: image-proxy
+      imagePullSecrets:
+        - name: regcred
