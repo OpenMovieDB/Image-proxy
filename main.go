@@ -62,7 +62,7 @@ func main() {
 		panic("Failed to create aws session")
 	}
 
-	converterStrategy := converter.MustStrategy()
+	converterStrategy := converter.MustStrategy(logger)
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
@@ -77,8 +77,9 @@ func main() {
 			LimiterMiddleware: limiter.SlidingWindow{},
 		}),
 		cache.New(cache.Config{
-			Expiration:   time.Duration(serviceConfig.CacheTTLInMin) * time.Minute,
-			CacheControl: true,
+			Expiration:           time.Duration(serviceConfig.CacheTTLInMin) * time.Minute,
+			CacheControl:         true,
+			StoreResponseHeaders: true,
 		}),
 	)
 

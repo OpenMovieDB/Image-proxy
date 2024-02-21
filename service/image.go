@@ -44,7 +44,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 
 	converterStrategy := i.converter.Apply(formatType)
 
-	img, err := converterStrategy.Convert(result.Body, params.Quality, func(img image.Image) (image.Image, error) {
+	img, contentLength, err := converterStrategy.Convert(ctx, result.Body, params.Quality, func(img image.Image) (image.Image, error) {
 		width := params.Width
 		height := img.Bounds().Dy() * width / img.Bounds().Dx()
 
@@ -61,6 +61,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 
 	response := &model.ImageResponse{
 		Body:               img,
+		ContentLength:      contentLength,
 		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.FileID, params.Type),
 		Type:               params.Type,
 	}
