@@ -20,10 +20,7 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 	i := &ImageController{service: service, logger: logger}
 
 	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
-	app.Get("/tmdb-images/*", i.TmdbProxy)
-	app.Get("/kinopoisk-images/*", i.KinopoiskProxy)
-	app.Get("/kinopoisk-ott-images/*", i.KinopoiskOttProxy)
-	app.Get("/kinopoisk-st-images/*", i.KinopoiskSTProxy)
+	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
 
 	return i
 }
@@ -89,61 +86,23 @@ func (i *ImageController) TmdbProxy(c *fiber.Ctx) error {
 	return c.SendStream(res.Body)
 }
 
-func (i *ImageController) KinopoiskProxy(c *fiber.Ctx) error {
+func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	url := "https://avatars.mds.yandex.net/get-kinopoisk-image/" + c.Params("*")
+	serviceType, err := model.MakeFromString(c.Params("service_type"))
+	if err != nil {
+		logger.Error("Error parsing service type", zap.Error(err))
+		return err
+	}
+
+	url := serviceType.ToProxyURL() + c.Params("*")
 
 	logger.Debug(fmt.Sprintf("Proxying image from Kinopoisk with url: %s", url))
 
 	res, err := http.Get(url)
 	if err != nil {
 		logger.Error("Error proxying image from Kinopoisk", zap.Error(err))
-		return err
-	}
-
-	for k, v := range res.Header {
-		c.Set(k, v[0])
-	}
-
-	c.Response().Header.Del(fiber.HeaderServer)
-	return c.SendStream(res.Body)
-}
-
-func (i *ImageController) KinopoiskOttProxy(c *fiber.Ctx) error {
-	ctx := c.UserContext()
-	logger := log.LoggerWithTrace(ctx, i.logger)
-
-	url := "https://avatars.mds.yandex.net/get-ott/" + c.Params("*")
-
-	logger.Debug(fmt.Sprintf("Proxying image from OTT Kinopoisk with url: %s", url))
-
-	res, err := http.Get(url)
-	if err != nil {
-		logger.Error("Error proxying image from OTT Kinopoisk", zap.Error(err))
-		return err
-	}
-
-	for k, v := range res.Header {
-		c.Set(k, v[0])
-	}
-
-	c.Response().Header.Del(fiber.HeaderServer)
-	return c.SendStream(res.Body)
-}
-
-func (i *ImageController) KinopoiskSTProxy(c *fiber.Ctx) error {
-	ctx := c.UserContext()
-	logger := log.LoggerWithTrace(ctx, i.logger)
-
-	url := "https://st.kp.yandex.net/images/" + c.Params("*")
-
-	logger.Debug(fmt.Sprintf("Proxying image from ST Kinopoisk with url: %s", url))
-
-	res, err := http.Get(url)
-	if err != nil {
-		logger.Error("Error proxying image from ST Kinopoisk", zap.Error(err))
 		return err
 	}
 
