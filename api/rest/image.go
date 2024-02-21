@@ -21,6 +21,7 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 
 	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
 	app.Get("/tmdb-images/*", i.TmdbProxy)
+	app.Get("/kinopoisk-images/*", i.KinopoiskProxy)
 
 	return i
 }
@@ -74,6 +75,22 @@ func (i *ImageController) TmdbProxy(c *fiber.Ctx) error {
 
 	if err := proxy.Do(c, url); err != nil {
 		logger.Error("Error proxying image from TMDB", zap.Error(err))
+		return err
+	}
+	c.Response().Header.Del(fiber.HeaderServer)
+	return nil
+}
+
+func (i *ImageController) KinopoiskProxy(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	url := "https://avatars.mds.yandex.net/get-kinopoisk-image/" + c.Params("*")
+
+	logger.Debug(fmt.Sprintf("Proxying image from Kinopoisk with url: %s", url))
+
+	if err := proxy.Do(c, url); err != nil {
+		logger.Error("Error proxying image from Kinopoisk", zap.Error(err))
 		return err
 	}
 	c.Response().Header.Del(fiber.HeaderServer)
