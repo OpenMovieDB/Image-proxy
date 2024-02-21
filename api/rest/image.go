@@ -23,6 +23,7 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 	app.Get("/tmdb-images/*", i.TmdbProxy)
 	app.Get("/kinopoisk-images/*", i.KinopoiskProxy)
 	app.Get("/kinopoisk-ott-images/*", i.KinopoiskOttProxy)
+	app.Get("/kinopoisk-st-images/*", i.KinopoiskSTProxy)
 
 	return i
 }
@@ -121,6 +122,28 @@ func (i *ImageController) KinopoiskOttProxy(c *fiber.Ctx) error {
 	res, err := http.Get(url)
 	if err != nil {
 		logger.Error("Error proxying image from OTT Kinopoisk", zap.Error(err))
+		return err
+	}
+
+	for k, v := range res.Header {
+		c.Set(k, v[0])
+	}
+
+	c.Response().Header.Del(fiber.HeaderServer)
+	return c.SendStream(res.Body)
+}
+
+func (i *ImageController) KinopoiskSTProxy(c *fiber.Ctx) error {
+	ctx := c.UserContext()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	url := "https://st.kp.yandex.net/images/" + c.Params("*")
+
+	logger.Debug(fmt.Sprintf("Proxying image from ST Kinopoisk with url: %s", url))
+
+	res, err := http.Get(url)
+	if err != nil {
+		logger.Error("Error proxying image from ST Kinopoisk", zap.Error(err))
 		return err
 	}
 
