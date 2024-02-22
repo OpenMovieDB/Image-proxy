@@ -64,28 +64,6 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	return c.SendStream(image.Body)
 }
 
-func (i *ImageController) TmdbProxy(c *fiber.Ctx) error {
-	ctx := c.UserContext()
-	logger := log.LoggerWithTrace(ctx, i.logger)
-
-	url := "https://www.themoviedb.org/t/p/" + c.Params("*")
-
-	logger.Debug(fmt.Sprintf("Proxying image from TMDB with url: %s", url))
-
-	res, err := http.Get(url)
-	if err != nil {
-		logger.Error("Error proxying image from TMDB", zap.Error(err))
-		return err
-	}
-
-	for k, v := range res.Header {
-		c.Set(k, v[0])
-	}
-
-	c.Response().Header.Del(fiber.HeaderServer)
-	return c.SendStream(res.Body)
-}
-
 func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger := log.LoggerWithTrace(ctx, i.logger)
