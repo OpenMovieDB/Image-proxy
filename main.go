@@ -23,7 +23,6 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
-	"time"
 )
 
 func main() {
@@ -46,8 +45,7 @@ func main() {
 
 	logger := log.InitLogger(ctx)
 	defer func() {
-		err := logger.Sync()
-		if err != nil {
+		if err = logger.Sync(); err != nil {
 			slog.Error("Error syncing logger: %v", err)
 		}
 	}()
@@ -73,11 +71,11 @@ func main() {
 		etag.New(),
 		limiter.New(limiter.Config{
 			Max:               serviceConfig.RateLimitMaxRequests,
-			Expiration:        time.Duration(serviceConfig.RateLimitDurationInSec) * time.Second,
+			Expiration:        serviceConfig.RateLimitDuration,
 			LimiterMiddleware: limiter.SlidingWindow{},
 		}),
 		cache.New(cache.Config{
-			Expiration:           time.Duration(serviceConfig.CacheTTLInMin) * time.Minute,
+			Expiration:           serviceConfig.CacheTTL,
 			CacheControl:         true,
 			StoreResponseHeaders: true,
 		}),
@@ -87,7 +85,7 @@ func main() {
 
 	rest.NewImageController(app, imageService, logger)
 
-	if err := app.Listen(":" + serviceConfig.Port); err != nil {
+	if err = app.Listen(":" + serviceConfig.Port); err != nil {
 		logger.Panic(err.Error())
 		return
 	}

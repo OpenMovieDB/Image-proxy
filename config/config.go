@@ -3,16 +3,17 @@ package config
 import (
 	"github.com/caarlos0/env/v8"
 	"log/slog"
+	"time"
 )
 
 type Config struct {
 	AppName string `env:"APP_NAME" envDefault:"OpenMovieDb image proxy"`
 	Port    string `env:"PORT" envDefault:"8080"`
 
-	RateLimitMaxRequests   int `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"1000"`
-	RateLimitDurationInSec int `env:"RATE_LIMIT_DURATION_IN_SEC" envDefault:"10"`
+	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"1000"`
+	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"10s"`
 
-	CacheTTLInMin int `env:"CACHE_TTL_IN_MIN" envDefault:"120"`
+	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"120m"`
 
 	S3Region    string `env:"S3_REGION"`
 	S3Bucket    string `env:"S3_BUCKET,required"`

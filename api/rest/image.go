@@ -41,7 +41,7 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 		return err
 	}
 
-	params := &model.ImageRequest{
+	params := model.ImageRequest{
 		EntityID: c.Params("entity_id"),
 		FileID:   c.Params("file_id"),
 		Width:    width,
@@ -51,14 +51,14 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 
 	logger.Debug(fmt.Sprintf("Processing image with params: %++v", params))
 
-	image, err := i.service.Process(ctx, *params)
+	image, err := i.service.Process(ctx, params)
 	if err != nil {
 		logger.Error("Error processing image", zap.Error(err))
 		return err
 	}
 
 	c.Type(image.Type)
-	c.Set("Content-Length", fmt.Sprintf("%d", image.ContentLength))
+	c.Set("Content-Length", strconv.Itoa(int(image.ContentLength)))
 	c.Set("Content-Disposition", image.ContentDisposition)
 
 	return c.SendStream(image.Body)
