@@ -2,16 +2,16 @@ package image
 
 import (
 	"context"
-	"image"
+	"github.com/h2non/bimg"
 	"io"
 )
 
 type Encoder interface {
-	Encode(ctx context.Context, img image.Image, quality float32) (io.Reader, int64, error)
+	Encode(ctx context.Context, img *bimg.Image, quality float32) (io.Reader, int64, error)
 }
 
 type CustomImage struct {
-	img image.Image
+	img *bimg.Image
 
 	t Encoder
 }
@@ -21,9 +21,14 @@ func NewCustomImage(t Encoder) *CustomImage {
 }
 
 func (ci *CustomImage) Decode(reader io.Reader) (err error) {
-	ci.img, _, err = image.Decode(reader)
+	buf, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
 
-	return err
+	ci.img = bimg.NewImage(buf)
+
+	return nil
 }
 
 func (ci *CustomImage) Transform(funcs ...Transform) {

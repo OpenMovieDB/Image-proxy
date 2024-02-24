@@ -1,20 +1,23 @@
 package image
 
 import (
-	"github.com/disintegration/imaging"
-	"image"
+	"github.com/h2non/bimg"
 )
 
-type Transform func(image.Image) image.Image
+type Transform func(img *bimg.Image) *bimg.Image
 
 func WithWidth(width int) Transform {
-	return func(img image.Image) image.Image {
-		imgDx := img.Bounds().Dx()
-		if width != imgDx && width != 0 {
-			height := img.Bounds().Dy() * width / imgDx
+	return func(img *bimg.Image) *bimg.Image {
+		imgSize, _ := img.Size()
 
-			return imaging.Resize(img, width, height, imaging.Lanczos)
+		if width != imgSize.Width && width != 0 {
+			height := imgSize.Height * width / imgSize.Width
+
+			resizedImage, _ := img.EnlargeAndCrop(width, height)
+
+			return bimg.NewImage(resizedImage)
 		}
+
 		return img
 	}
 }
