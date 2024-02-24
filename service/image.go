@@ -46,9 +46,11 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 
 	img, contentLength, err := converterStrategy.Convert(ctx, result.Body, params.Quality, func(img image.Image) (image.Image, error) {
 		width := params.Width
-		height := img.Bounds().Dy() * width / img.Bounds().Dx()
+		imgDx := img.Bounds().Dx()
 
-		if width != img.Bounds().Dx() && width != 0 {
+		if width != imgDx && width != 0 {
+			height := img.Bounds().Dy() * width / imgDx
+
 			return imaging.Resize(img, width, height, imaging.MitchellNetravali), nil
 		}
 
