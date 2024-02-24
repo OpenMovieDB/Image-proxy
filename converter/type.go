@@ -1,6 +1,8 @@
 package converter
 
-import "fmt"
+import (
+	"errors"
+)
 
 type Type struct {
 	s string
@@ -13,21 +15,22 @@ var (
 	PNG  = Type{"png"}
 )
 
-func (t Type) String() string {
-	return t.s
+func (t *Type) UnmarshalText(text []byte) error {
+	switch string(text) {
+	case "webp":
+		*t = Type{"webp"}
+	case "avif":
+		*t = Type{"avif"}
+	case "jpeg":
+		*t = Type{"jpeg"}
+	case "png":
+		*t = Type{"png"}
+	default:
+		return errors.New("unknown type")
+	}
+	return nil
 }
 
-func MakeFromString(s string) (Type, error) {
-	switch s {
-	case WEBP.s:
-		return WEBP, nil
-	case AVIF.s:
-		return AVIF, nil
-	case JPEG.s:
-		return JPEG, nil
-	case PNG.s:
-		return PNG, nil
-	}
-
-	return Type{}, fmt.Errorf("unknown type: %s", s)
+func (t *Type) String() string {
+	return t.s
 }
