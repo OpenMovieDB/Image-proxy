@@ -32,6 +32,6 @@ func (ci *CustomImage) Transform(funcs ...Transform) {
 	}
 }
 
-func (ci CustomImage) Encode(ctx context.Context, quality float32) (io.Reader, int64, error) {
+func (ci *CustomImage) Encode(ctx context.Context, quality float32) (io.Reader, int64, error) {
 	return ci.t.Encode(ctx, ci.img, quality)
 }

@@ -54,7 +54,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 		Body:               img,
 		ContentLength:      contentLength,
 		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.File, params.Type),
-		Type:               params.Type,
+		Type:               params.Type.String(),
 	}, nil
 }
 
