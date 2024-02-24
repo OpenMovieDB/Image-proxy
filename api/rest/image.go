@@ -19,7 +19,7 @@ type ImageController struct {
 func NewImageController(app *fiber.App, service *service.ImageService, logger *zap.Logger) *ImageController {
 	i := &ImageController{service: service, logger: logger}
 
-	app.Get("/images/:entity_id/:file_id/:width/:quality/:type", i.Process)
+	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)
 	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
 
 	return i
@@ -29,29 +29,18 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	width, err := c.ParamsInt("width")
-	if err != nil {
-		logger.Error("Error parsing width", zap.Error(err))
-		return err
-	}
+	params := &model.ImageRequest{}
 
-	quality, err := strconv.ParseFloat(c.Params("quality"), 32)
+	err := c.ParamsParser(params)
 	if err != nil {
-		logger.Error("Error parsing quality", zap.Error(err))
+		logger.Error("Error parsing params", zap.Error(err))
 		return err
-	}
 
-	params := model.ImageRequest{
-		EntityID: c.Params("entity_id"),
-		FileID:   c.Params("file_id"),
-		Width:    width,
-		Quality:  float32(quality),
-		Type:     c.Params("type"),
 	}
 
 	logger.Debug(fmt.Sprintf("Processing image with params: %++v", params))
 
-	image, err := i.service.Process(ctx, params)
+	image, err := i.service.Process(ctx, *params)
 	if err != nil {
 		logger.Error("Error processing image", zap.Error(err))
 		return err

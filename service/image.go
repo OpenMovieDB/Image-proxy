@@ -28,7 +28,7 @@ func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logg
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	result, err := i.imageFromS3(ctx, params)
+	result, err := i.getFromS3(ctx, params)
 	if err != nil {
 		logger.Error("Error getting image from S3", zap.Error(err))
 		return nil, err
@@ -36,7 +36,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 
 	formatType, err := image.MakeFromString(params.Type)
 	if err != nil {
-		logger.Error("Error converting format type", zap.Error(err))
+		logger.Error("Error decoding image", zap.Error(err))
 		return nil, err
 	}
 
@@ -54,7 +54,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 		return nil, err
 	}
 
-	logger.Debug(fmt.Sprintf("Image processed with params: %++v", params))
+	logger.Debug(fmt.Sprintf("Image %s converted to %s, quality: %f, width: %d", params.File, params.Type, params.Quality, params.Width))
 
 	return &model.ImageResponse{
 		Body:               img,
@@ -64,10 +64,10 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 	}, nil
 }
 
-func (i *ImageService) imageFromS3(ctx context.Context, params model.ImageRequest) (*s3.GetObjectOutput, error) {
+func (i *ImageService) getFromS3(ctx context.Context, params model.ImageRequest) (*s3.GetObjectOutput, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	fileKey := fmt.Sprintf("%s/%s", params.EntityID, params.FileID)
+	fileKey := fmt.Sprintf("%s/%s", params.Entity, params.File)
 	logger = logger.With(zap.String("fileKey", fileKey))
 
 	result, err := i.s3.GetObject(&s3.GetObjectInput{Bucket: &i.config.S3Bucket, Key: &fileKey})

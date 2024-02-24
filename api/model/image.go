@@ -1,13 +1,16 @@
 package model
 
-import "io"
+import (
+	"io"
+	"resizer/converter"
+)
 
 type ImageRequest struct {
-	EntityID string  `json:"entity_id"`
-	FileID   string  `json:"file_id"`
-	Width    int     `json:"width"`
-	Quality  float32 `json:"quality"`
-	Type     string  `json:"type"`
+	Entity  string         `json:"entity"`
+	File    string         `json:"file"`
+	Width   int            `json:"width"`
+	Quality float32        `json:"quality"`
+	Type    converter.Type `json:"type"`
 }
 
 type ImageResponse struct {
