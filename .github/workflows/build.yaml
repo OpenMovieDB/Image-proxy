@@ -11,13 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
-      # Install Go if your project requires it
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
-          go-version: '1.x' # Use the version of Go needed for your project
+          go-version: '1.x'
 
-      # Generate Swagger Documentation
       - name: Install Swagger
         run: |
           go get -u github.com/swaggo/swag/cmd/swag 2>/dev/null
@@ -28,18 +26,15 @@ jobs:
           swag fmt
           swag init --parseDependency --parseInternal --parseDepth 1
 
-      # Set up Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v1
 
-      # Login to DockerHub
       - name: Login to DockerHub
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
 
-      # Build and Push
       - name: Build and Push
         uses: docker/build-push-action@v2
         with:

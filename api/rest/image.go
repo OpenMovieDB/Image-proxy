@@ -31,7 +31,7 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 //	@Description	Processes an image according to the specified parameters including entity, file, width, quality, and type.
 //	@Tags			image
 //	@Accept			json
-//	@Produce		image/jpeg, image/png
+//	@Produce		image/jpeg,image/png,image/webp,image/avif
 //	@Param			entity	path	string	true	"Entity"
 //	@Param			file	path	string	true	"File name"
 //	@Param			width	path	int		true	"Width"
@@ -73,7 +73,7 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 //	@Description	Proxies an image from a specified external service based on the full request URL.
 //	@Tags			proxy
 //	@Accept			json
-//	@Produce		image/jpeg, image/png
+//	@Produce		image/jpeg,image/png,image/webp
 //	@Param			service_type	path	string	true	"Service Type"
 //	@Param			path			path	string	true	"Path"
 //	@Success		200				{file}	file	"Returns the proxied image"
