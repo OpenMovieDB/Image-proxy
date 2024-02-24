@@ -1,4 +1,4 @@
-package converter
+package format
 
 import (
 	"bytes"
@@ -12,26 +12,22 @@ import (
 )
 
 type Webp struct {
-	Strategy
-
 	logger *zap.Logger
 }
 
-func mustWebp(logger *zap.Logger) *Webp {
+func MustWebp(logger *zap.Logger) *Webp {
 	return &Webp{logger: logger}
 }
 
-func (w *Webp) Convert(ctx context.Context, image image.Image, quality float32) (io.Reader, int64, error) {
+func (w *Webp) Encode(ctx context.Context, img image.Image, quality float32) (io.Reader, int64, error) {
 	logger := log.LoggerWithTrace(ctx, w.logger)
-
-	var buf bytes.Buffer
-
 	logger.Debug(fmt.Sprintf("Converting image to webp with quality: %f", quality))
 
-	if err := webp.Encode(&buf, image, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
+	var buf *bytes.Buffer
+	if err := webp.Encode(buf, img, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}
 
-	return &buf, int64(buf.Len()), nil
+	return buf, int64(buf.Len()), nil
 }

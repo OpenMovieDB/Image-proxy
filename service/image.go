@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/disintegration/imaging"
 	"go.uber.org/zap"
-	"image"
 	"resizer/api/model"
 	"resizer/config"
-	"resizer/converter"
+	"resizer/converter/image"
 	"resizer/shared/log"
 )
 
@@ -18,13 +16,13 @@ type ImageService struct {
 
 	s3 *s3.S3
 
-	converter *converter.StrategyImpl
+	strategy *image.Strategy
 
 	logger *zap.Logger
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config, converter *converter.StrategyImpl, logger *zap.Logger) *ImageService {
-	return &ImageService{s3: s3, config: c, converter: converter, logger: logger}
+func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
+	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
 }
 
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
@@ -36,17 +34,17 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 		return nil, err
 	}
 
-	decodeImage, _, err := image.Decode(result.Body)
-	if err != nil {
-		logger.Error("Error decoding image", zap.Error(err))
+	customImage := image.NewCustomImage(i.strategy.Apply(params.Type))
+	if err = customImage.Decode(result.Body); err != nil {
+		logger.Error("Error decoding format type", zap.Error(err))
 		return nil, err
 	}
 
-	converterStrategy := i.converter.Apply(params.Type)
+	customImage.Transform(image.WithWidth(params.Width))
 
-	img, contentLength, err := converterStrategy.Convert(ctx, decodeImage, params.Quality)
+	img, contentLength, err := customImage.Encode(ctx, params.Quality)
 	if err != nil {
-		logger.Error("Error converting format type", zap.Error(err))
+		logger.Error("Error encoding format type", zap.Error(err))
 		return nil, err
 	}
 
@@ -55,8 +53,8 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 	return &model.ImageResponse{
 		Body:               img,
 		ContentLength:      contentLength,
-		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.File, params.Type.String()),
-		Type:               params.Type.String(),
+		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.File, params.Type),
+		Type:               params.Type,
 	}, nil
 }
 
@@ -64,29 +62,15 @@ func (i *ImageService) getFromS3(ctx context.Context, params model.ImageRequest)
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
 	fileKey := fmt.Sprintf("%s/%s", params.Entity, params.File)
+	logger = logger.With(zap.String("fileKey", fileKey))
 
-	input := &s3.GetObjectInput{Bucket: &i.config.S3Bucket, Key: &fileKey}
-
-	result, err := i.s3.GetObject(input)
+	result, err := i.s3.GetObject(&s3.GetObjectInput{Bucket: &i.config.S3Bucket, Key: &fileKey})
 	if err != nil {
-		logger.Error(fmt.Sprintf("Error getting object %s from bucket %s", fileKey, i.config.S3Bucket), zap.Error(err))
+		logger.Error(fmt.Sprintf("Error getting object from bucket %s", i.config.S3Bucket), zap.Error(err))
 		return nil, err
 	}
 
-	logger.Debug(fmt.Sprintf("Image %s fetched from S3", fileKey))
+	logger.Debug("Image was fetched from S3")
 
 	return result, nil
-}
-
-func (i *ImageService) resize(img image.Image, params model.ImageRequest) image.Image {
-	width := params.Width
-	imgDx := img.Bounds().Dx()
-
-	if width != imgDx && width != 0 {
-		height := img.Bounds().Dy() * width / imgDx
-
-		return imaging.Resize(img, width, height, imaging.MitchellNetravali)
-	}
-
-	return img
 }

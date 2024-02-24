@@ -1,4 +1,4 @@
-package converter
+package format
 
 import (
 	"bytes"
@@ -12,24 +12,22 @@ import (
 )
 
 type Jpeg struct {
-	Strategy
 	logger *zap.Logger
 }
 
-func mustJpeg(logger *zap.Logger) *Jpeg {
+func MustJpeg(logger *zap.Logger) *Jpeg {
 	return &Jpeg{logger: logger}
 }
 
-func (w *Jpeg) Convert(ctx context.Context, image image.Image, quality float32) (io.Reader, int64, error) {
+func (w *Jpeg) Encode(ctx context.Context, img image.Image, quality float32) (io.Reader, int64, error) {
 	logger := log.LoggerWithTrace(ctx, w.logger)
-	var buf bytes.Buffer
-
 	logger.Debug(fmt.Sprintf("Converting image to jpeg with quality: %f", quality))
 
-	if err := jpeg.Encode(&buf, image, &jpeg.Options{Quality: int(quality)}); err != nil {
+	var buf *bytes.Buffer
+	if err := jpeg.Encode(buf, img, &jpeg.Options{Quality: int(quality)}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}
 
-	return &buf, int64(buf.Len()), nil
+	return buf, int64(buf.Len()), nil
 }
