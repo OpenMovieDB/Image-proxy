@@ -23,11 +23,11 @@ func (w *Webp) Encode(ctx context.Context, img image.Image, quality float32) (io
 	logger := log.LoggerWithTrace(ctx, w.logger)
 	logger.Debug(fmt.Sprintf("Converting image to webp with quality: %f", quality))
 
-	var buf *bytes.Buffer
-	if err := webp.Encode(buf, img, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
+	var buf bytes.Buffer
+	if err := webp.Encode(&buf, img, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}
 
-	return buf, int64(buf.Len()), nil
+	return &buf, int64(buf.Len()), nil
 }

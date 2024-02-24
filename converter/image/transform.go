@@ -5,15 +5,16 @@ import (
 	"image"
 )
 
-type Transform func(image.Image)
+type Transform func(image.Image) image.Image
 
 func WithWidth(width int) Transform {
-	return func(img image.Image) {
+	return func(img image.Image) image.Image {
 		imgDx := img.Bounds().Dx()
 		if width != imgDx && width != 0 {
 			height := img.Bounds().Dy() * width / imgDx
 
-			img = imaging.Resize(img, width, height, imaging.MitchellNetravali)
+			return imaging.Resize(img, width, height, imaging.Lanczos)
 		}
+		return img
 	}
 }

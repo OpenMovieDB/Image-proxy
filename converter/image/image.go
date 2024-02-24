@@ -28,7 +28,7 @@ func (ci *CustomImage) Decode(reader io.Reader) (err error) {
 
 func (ci *CustomImage) Transform(funcs ...Transform) {
 	for _, f := range funcs {
-		f(ci.img)
+		ci.img = f(ci.img)
 	}
 }
 

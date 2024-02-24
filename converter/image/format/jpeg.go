@@ -23,11 +23,11 @@ func (w *Jpeg) Encode(ctx context.Context, img image.Image, quality float32) (io
 	logger := log.LoggerWithTrace(ctx, w.logger)
 	logger.Debug(fmt.Sprintf("Converting image to jpeg with quality: %f", quality))
 
-	var buf *bytes.Buffer
-	if err := jpeg.Encode(buf, img, &jpeg.Options{Quality: int(quality)}); err != nil {
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: int(quality)}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}
 
-	return buf, int64(buf.Len()), nil
+	return &buf, int64(buf.Len()), nil
 }
