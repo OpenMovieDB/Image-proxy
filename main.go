@@ -15,11 +15,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
+	"resizer/converter/image"
 
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
-	"resizer/converter"
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
@@ -60,7 +60,7 @@ func main() {
 		panic("Failed to create aws session")
 	}
 
-	converterStrategy := converter.MustStrategy(logger)
+	converterStrategy := image.MustStrategy(logger)
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
