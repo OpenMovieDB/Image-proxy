@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gofiber/contrib/fiberzap/v2"
 	"github.com/gofiber/contrib/otelfiber/v2"
+	"github.com/gofiber/contrib/swagger"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cache"
 	"github.com/gofiber/fiber/v2/middleware/compress"
@@ -15,16 +16,20 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
-	"resizer/converter/image"
-
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
+	"resizer/converter/image"
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
 )
 
+//	@title			OpenMovieDB Image Proxy service
+//	@version		1.0
+//	@description	This is an API for OpenMovieDB Image Proxy service
+
+// @BasePath	/
 func main() {
 	serviceConfig := config.New()
 
@@ -73,6 +78,12 @@ func main() {
 			Max:               serviceConfig.RateLimitMaxRequests,
 			Expiration:        serviceConfig.RateLimitDuration,
 			LimiterMiddleware: limiter.SlidingWindow{},
+		}),
+		swagger.New(swagger.Config{
+			BasePath: "/",
+			FilePath: "./docs/swagger.json",
+			Path:     "docs",
+			Title:    "OpenMovieDB Image Proxy service",
 		}),
 		cache.New(cache.Config{
 			Expiration:           serviceConfig.CacheTTL,

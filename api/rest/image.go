@@ -25,6 +25,20 @@ func NewImageController(app *fiber.App, service *service.ImageService, logger *z
 	return i
 }
 
+// Process image
+//
+//	@Summary		Process image based on parameters
+//	@Description	Processes an image according to the specified parameters including entity, file, width, quality, and type.
+//	@Tags			image
+//	@Accept			json
+//	@Produce		image/jpeg, image/png
+//	@Param			entity	path	string	true	"Entity"
+//	@Param			file	path	string	true	"File name"
+//	@Param			width	path	int		true	"Width"
+//	@Param			quality	path	int		true	"Quality"
+//	@Param			type	path	string	true	"Image type"
+//	@Success		200		{file}	file	"Returns the processed image"
+//	@Router			/images/{entity}/{file}/{width}/{quality}/{type} [get]
 func (i *ImageController) Process(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger := log.LoggerWithTrace(ctx, i.logger)
@@ -53,6 +67,17 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 	return c.SendStream(image.Body)
 }
 
+// Proxy image
+//
+//	@Summary		Proxy image from a service
+//	@Description	Proxies an image from a specified external service based on the full request URL.
+//	@Tags			proxy
+//	@Accept			json
+//	@Produce		image/jpeg, image/png
+//	@Param			service_type	path	string	true	"Service Type"
+//	@Param			path			path	string	true	"Path"
+//	@Success		200				{file}	file	"Returns the proxied image"
+//	@Router			/{service_type}/{path} [get]
 func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	ctx := c.UserContext()
 	logger := log.LoggerWithTrace(ctx, i.logger)
