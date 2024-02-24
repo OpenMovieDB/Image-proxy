@@ -8,7 +8,7 @@ import (
 )
 
 type Strategy interface {
-	Convert(ctx context.Context, reader io.Reader, quality float32, f func(img image.Image) (image.Image, error)) (io.Reader, int64, error)
+	Convert(ctx context.Context, image image.Image, quality float32) (io.Reader, int64, error)
 }
 
 type StrategyImpl struct {

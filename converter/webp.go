@@ -3,6 +3,7 @@ package converter
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/chai2010/webp"
 	"go.uber.org/zap"
 	"image"
@@ -20,23 +21,14 @@ func mustWebp(logger *zap.Logger) *Webp {
 	return &Webp{logger: logger}
 }
 
-func (w *Webp) Convert(ctx context.Context, reader io.Reader, quality float32, f func(img image.Image) (image.Image, error)) (io.Reader, int64, error) {
+func (w *Webp) Convert(ctx context.Context, image image.Image, quality float32) (io.Reader, int64, error) {
 	logger := log.LoggerWithTrace(ctx, w.logger)
+
 	var buf bytes.Buffer
 
-	img, _, err := image.Decode(reader)
-	if err != nil {
-		logger.Error(err.Error())
-		return nil, 0, err
-	}
+	logger.Debug(fmt.Sprintf("Converting image to webp with quality: %f", quality))
 
-	img, err = f(img)
-	if err != nil {
-		logger.Error(err.Error())
-		return nil, 0, err
-	}
-
-	if err := webp.Encode(&buf, img, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
+	if err := webp.Encode(&buf, image, &webp.Options{Lossless: quality == 100, Quality: quality}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}

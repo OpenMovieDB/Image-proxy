@@ -3,6 +3,7 @@ package converter
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"go.uber.org/zap"
 	"image"
 	"image/jpeg"
@@ -19,23 +20,13 @@ func mustJpeg(logger *zap.Logger) *Jpeg {
 	return &Jpeg{logger: logger}
 }
 
-func (w *Jpeg) Convert(ctx context.Context, reader io.Reader, quality float32, f func(img image.Image) (image.Image, error)) (io.Reader, int64, error) {
+func (w *Jpeg) Convert(ctx context.Context, image image.Image, quality float32) (io.Reader, int64, error) {
 	logger := log.LoggerWithTrace(ctx, w.logger)
 	var buf bytes.Buffer
 
-	img, _, err := image.Decode(reader)
-	if err != nil {
-		logger.Error(err.Error())
-		return nil, 0, err
-	}
+	logger.Debug(fmt.Sprintf("Converting image to jpeg with quality: %f", quality))
 
-	img, err = f(img)
-	if err != nil {
-		logger.Error(err.Error())
-		return nil, 0, err
-	}
-
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: int(quality)}); err != nil {
+	if err := jpeg.Encode(&buf, image, &jpeg.Options{Quality: int(quality)}); err != nil {
 		logger.Error(err.Error())
 		return nil, 0, err
 	}

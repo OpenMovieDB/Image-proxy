@@ -30,9 +30,15 @@ func NewImageService(s3 *s3.S3, c *config.Config, converter *converter.StrategyI
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	result, err := i.imageFromS3(ctx, params)
+	result, err := i.getFromS3(ctx, params)
 	if err != nil {
 		logger.Error("Error getting image from S3", zap.Error(err))
+		return nil, err
+	}
+
+	decodeImage, _, err := image.Decode(result.Body)
+	if err != nil {
+		logger.Error("Error decoding image", zap.Error(err))
 		return nil, err
 	}
 
@@ -44,18 +50,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 
 	converterStrategy := i.converter.Apply(formatType)
 
-	img, contentLength, err := converterStrategy.Convert(ctx, result.Body, params.Quality, func(img image.Image) (image.Image, error) {
-		width := params.Width
-		imgDx := img.Bounds().Dx()
-
-		if width != imgDx && width != 0 {
-			height := img.Bounds().Dy() * width / imgDx
-
-			return imaging.Resize(img, width, height, imaging.MitchellNetravali), nil
-		}
-
-		return img, nil
-	})
+	img, contentLength, err := converterStrategy.Convert(ctx, decodeImage, params.Quality)
 	if err != nil {
 		logger.Error("Error converting format type", zap.Error(err))
 		return nil, err
@@ -73,7 +68,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 	return response, nil
 }
 
-func (i *ImageService) imageFromS3(ctx context.Context, params model.ImageRequest) (*s3.GetObjectOutput, error) {
+func (i *ImageService) getFromS3(ctx context.Context, params model.ImageRequest) (*s3.GetObjectOutput, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
 	fileKey := fmt.Sprintf("%s/%s", params.EntityID, params.FileID)
@@ -89,4 +84,17 @@ func (i *ImageService) imageFromS3(ctx context.Context, params model.ImageReques
 	logger.Debug(fmt.Sprintf("Image %s fetched from S3", fileKey))
 
 	return result, nil
+}
+
+func (i *ImageService) resize(img image.Image, params model.ImageRequest) image.Image {
+	width := params.Width
+	imgDx := img.Bounds().Dx()
+
+	if width != imgDx && width != 0 {
+		height := img.Bounds().Dy() * width / imgDx
+
+		return imaging.Resize(img, width, height, imaging.MitchellNetravali)
+	}
+
+	return img
 }
