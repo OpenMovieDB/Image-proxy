@@ -3,6 +3,7 @@ package format
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"github.com/Kagami/go-avif"
 	"go.uber.org/zap"
 	"image"
@@ -22,6 +23,7 @@ func (w *Avif) Encode(ctx context.Context, img image.Image, quality float32) (io
 	logger := log.LoggerWithTrace(ctx, w.logger)
 
 	qualityAiff := 63 - int(quality/100*63)
+	logger.Debug(fmt.Sprintf("Converting image to avif with quality: %d", qualityAiff))
 
 	var buf *bytes.Buffer
 	if err := avif.Encode(buf, img, &avif.Options{Threads: 0, Speed: 8, Quality: qualityAiff}); err != nil {

@@ -18,8 +18,9 @@ func MustPng(logger *zap.Logger) *Png {
 	return &Png{logger: logger}
 }
 
-func (w *Png) Encode(ctx context.Context, img image.Image, quality float32) (io.Reader, int64, error) {
+func (w *Png) Encode(ctx context.Context, img image.Image, _ float32) (io.Reader, int64, error) {
 	logger := log.LoggerWithTrace(ctx, w.logger)
+	logger.Debug("Converting image to png")
 
 	var buf *bytes.Buffer
 	if err := png.Encode(buf, img); err != nil {

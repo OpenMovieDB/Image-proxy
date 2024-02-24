@@ -34,13 +34,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 		return nil, err
 	}
 
-	formatType, err := image.MakeFromString(params.Type)
-	if err != nil {
-		logger.Error("Error decoding image", zap.Error(err))
-		return nil, err
-	}
-
-	customImage := image.NewCustomImage(i.strategy.Apply(formatType))
+	customImage := image.NewCustomImage(i.strategy.Apply(params.Type))
 	if err = customImage.Decode(result.Body); err != nil {
 		logger.Error("Error decoding format type", zap.Error(err))
 		return nil, err
@@ -59,7 +53,7 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 	return &model.ImageResponse{
 		Body:               img,
 		ContentLength:      contentLength,
-		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.FileID, params.Type),
+		ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.File, params.Type),
 		Type:               params.Type,
 	}, nil
 }
