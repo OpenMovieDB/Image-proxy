@@ -34,6 +34,15 @@ func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (
 		return nil, err
 	}
 
+	if *result.ContentType == "image/svg+xml" {
+		return &model.ImageResponse{
+			Body:               result.Body,
+			ContentLength:      *result.ContentLength,
+			ContentDisposition: fmt.Sprintf("inline; filename=%s.%s", params.File, result.ContentType),
+			Type:               params.Type.String(),
+		}, nil
+	}
+
 	customImage := image.NewCustomImage(i.strategy.Apply(params.Type))
 	if err = customImage.Decode(result.Body); err != nil {
 		logger.Error("Error decoding format type", zap.Error(err))

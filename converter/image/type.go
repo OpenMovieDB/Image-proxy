@@ -13,6 +13,7 @@ var (
 	AVIF = Type{"avif"}
 	JPEG = Type{"jpeg"}
 	PNG  = Type{"png"}
+	SVG  = Type{"svg"}
 )
 
 func (t *Type) UnmarshalText(text []byte) error {
@@ -25,6 +26,8 @@ func (t *Type) UnmarshalText(text []byte) error {
 		*t = Type{"jpeg"}
 	case "png":
 		*t = Type{"png"}
+	case "svg":
+		*t = Type{"svg"}
 	default:
 		return errors.New("unknown type")
 	}
