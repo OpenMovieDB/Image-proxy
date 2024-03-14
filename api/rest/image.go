@@ -103,5 +103,5 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	}
 
 	c.Response().Header.Del(fiber.HeaderServer)
-	return c.SendStream(res.Body)
+	return c.Status(res.StatusCode).SendStream(res.Body)
 }
