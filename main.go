@@ -15,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/storage/redis/v3"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
 	"log/slog"
 	"resizer/api/rest"
@@ -23,6 +24,7 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
+	"runtime"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -32,6 +34,7 @@ import (
 // @BasePath	/
 func main() {
 	serviceConfig := config.New()
+	dragonflyConfig := config.NewDragonflyConfig()
 
 	ctx := context.Background()
 
@@ -67,6 +70,17 @@ func main() {
 
 	converterStrategy := image.MustStrategy(logger)
 
+	store := redis.New(redis.Config{
+		Host:      dragonflyConfig.Host,
+		Port:      dragonflyConfig.Port,
+		Username:  "",
+		Password:  dragonflyConfig.Password,
+		Database:  3,
+		Reset:     false,
+		TLSConfig: nil,
+		PoolSize:  10 * runtime.GOMAXPROCS(0),
+	})
+
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
 		recover.New(),
@@ -89,6 +103,7 @@ func main() {
 			Expiration:           serviceConfig.CacheTTL,
 			CacheControl:         true,
 			StoreResponseHeaders: true,
+			Storage:              store,
 		}),
 	)
 
