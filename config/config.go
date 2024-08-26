@@ -13,7 +13,7 @@ type Config struct {
 	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"1000"`
 	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"10s"`
 
-	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"120m"`
+	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"60m"`
 
 	S3Region    string `env:"S3_REGION"`
 	S3Bucket    string `env:"S3_BUCKET,required"`
