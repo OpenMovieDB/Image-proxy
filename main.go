@@ -86,9 +86,11 @@ func main() {
 		compress.New(compress.Config{Level: compress.LevelBestSpeed}),
 		etag.New(),
 		limiter.New(limiter.Config{
-			Max:               serviceConfig.RateLimitMaxRequests,
-			Expiration:        serviceConfig.RateLimitDuration,
-			LimiterMiddleware: limiter.SlidingWindow{},
+			Next: func(c *fiber.Ctx) bool {
+				return c.IP() == "127.0.0.1"
+			},
+			Max:        serviceConfig.RateLimitMaxRequests,
+			Expiration: serviceConfig.RateLimitDuration,
 		}),
 		swagger.New(swagger.Config{
 			BasePath: "/",
