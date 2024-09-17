@@ -10,12 +10,10 @@ import (
 	"github.com/gofiber/contrib/otelfiber/v2"
 	"github.com/gofiber/contrib/swagger"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cache"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/storage/redis/v3"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
 	"log/slog"
 	"resizer/api/rest"
@@ -24,7 +22,6 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
-	"runtime"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -34,7 +31,7 @@ import (
 // @BasePath	/
 func main() {
 	serviceConfig := config.New()
-	dragonflyConfig := config.NewDragonflyConfig()
+	//dragonflyConfig := config.NewDragonflyConfig()
 
 	ctx := context.Background()
 
@@ -70,16 +67,16 @@ func main() {
 
 	converterStrategy := image.MustStrategy(logger)
 
-	store := redis.New(redis.Config{
-		Host:      dragonflyConfig.Host,
-		Port:      dragonflyConfig.Port,
-		Username:  "",
-		Password:  dragonflyConfig.Password,
-		Database:  3,
-		Reset:     false,
-		TLSConfig: nil,
-		PoolSize:  10 * runtime.GOMAXPROCS(0),
-	})
+	//store := redis.New(redis.Config{
+	//	Host:      dragonflyConfig.Host,
+	//	Port:      dragonflyConfig.Port,
+	//	Username:  "",
+	//	Password:  dragonflyConfig.Password,
+	//	Database:  3,
+	//	Reset:     false,
+	//	TLSConfig: nil,
+	//	PoolSize:  10 * runtime.GOMAXPROCS(0),
+	//})
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
@@ -99,12 +96,12 @@ func main() {
 			Path:     "docs",
 			Title:    "OpenMovieDB Image Proxy service",
 		}),
-		cache.New(cache.Config{
-			Expiration:           serviceConfig.CacheTTL,
-			CacheControl:         true,
-			StoreResponseHeaders: true,
-			Storage:              store,
-		}),
+		//cache.New(cache.Config{
+		//	Expiration:           serviceConfig.CacheTTL,
+		//	CacheControl:         true,
+		//	StoreResponseHeaders: true,
+		//	Storage:              store,
+		//}),
 	)
 
 	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
