@@ -5,6 +5,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 	"net/http"
+	"regexp"
 	"resizer/api/model"
 	"resizer/service"
 	"resizer/shared/log"
@@ -15,6 +16,8 @@ type ImageController struct {
 	service *service.ImageService
 	logger  *zap.Logger
 }
+
+var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
 func NewImageController(app *fiber.App, service *service.ImageService, logger *zap.Logger) *ImageController {
 	i := &ImageController{service: service, logger: logger}
@@ -89,6 +92,10 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	}
 
 	url := serviceType.ToProxyURL() + c.Params("*")
+
+	if serviceType.String() == "kinopoisk-images" {
+		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
+	}
 
 	logger.Debug(fmt.Sprintf("Proxying image from Kinopoisk with url: %s", url))
 
