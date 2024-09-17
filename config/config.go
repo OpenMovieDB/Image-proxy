@@ -11,7 +11,7 @@ type Config struct {
 	Port    string `env:"PORT" envDefault:"8080"`
 
 	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"100"`
-	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"10s"`
+	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"1s"`
 
 	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"10m"`
 
