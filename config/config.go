@@ -10,7 +10,7 @@ type Config struct {
 	AppName string `env:"APP_NAME" envDefault:"OpenMovieDb image proxy"`
 	Port    string `env:"PORT" envDefault:"8080"`
 
-	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"1000"`
+	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"100"`
 	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"10s"`
 
 	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"10m"`
