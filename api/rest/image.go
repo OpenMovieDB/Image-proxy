@@ -14,14 +14,14 @@ import (
 )
 
 type ImageController struct {
-	cfg     config.Config
+	cfg     *config.Config
 	service *service.ImageService
 	logger  *zap.Logger
 }
 
 var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
-func NewImageController(app *fiber.App, cfg config.Config, service *service.ImageService, logger *zap.Logger) *ImageController {
+func NewImageController(app *fiber.App, cfg *config.Config, service *service.ImageService, logger *zap.Logger) *ImageController {
 	i := &ImageController{service: service, cfg: cfg, logger: logger}
 
 	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)

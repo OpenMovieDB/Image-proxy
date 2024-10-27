@@ -108,7 +108,7 @@ func main() {
 
 	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
 
-	rest.NewImageController(app, imageService, logger)
+	rest.NewImageController(app, serviceConfig, imageService, logger)
 
 	if err = app.Listen(":" + serviceConfig.Port); err != nil {
 		logger.Panic(err.Error())
