@@ -7,20 +7,22 @@ import (
 	"net/http"
 	"regexp"
 	"resizer/api/model"
+	"resizer/config"
 	"resizer/service"
 	"resizer/shared/log"
 	"strconv"
 )
 
 type ImageController struct {
+	cfg     config.Config
 	service *service.ImageService
 	logger  *zap.Logger
 }
 
 var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
-func NewImageController(app *fiber.App, service *service.ImageService, logger *zap.Logger) *ImageController {
-	i := &ImageController{service: service, logger: logger}
+func NewImageController(app *fiber.App, cfg config.Config, service *service.ImageService, logger *zap.Logger) *ImageController {
+	i := &ImageController{service: service, cfg: cfg, logger: logger}
 
 	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)
 	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
@@ -91,7 +93,7 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 		return err
 	}
 
-	url := serviceType.ToProxyURL() + c.Params("*")
+	url := serviceType.ToProxyURL(i.cfg.TMDBImageProxy) + c.Params("*")
 
 	if serviceType.String() == "kinopoisk-images" {
 		url = kinopoiskSizes.ReplaceAllString(url, "440x660")

@@ -20,6 +20,8 @@ type Config struct {
 	S3AccessKey string `env:"S3_ACCESS_KEY,required"`
 	S3SecretKey string `env:"S3_SECRET_KEY,required"`
 	S3Endpoint  string `env:"S3_ENDPOINT,required"`
+
+	TMDBImageProxy string `env:"TMDB_IMAGE_PROXY"`
 }
 
 func New() *Config {

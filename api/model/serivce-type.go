@@ -32,10 +32,10 @@ func MakeFromString(s string) (ServiceName, error) {
 	return ServiceName{}, fmt.Errorf("unknown type: %s", s)
 }
 
-func (t ServiceName) ToProxyURL() string {
+func (t ServiceName) ToProxyURL(tmdbProxyURL string) string {
 	switch t {
 	case TmdbImages:
-		return "https://www.themoviedb.org/t/p/"
+		return tmdbProxyURL + "?url=" + "https://www.themoviedb.org/t/p/"
 	case KinopoiskImages:
 		return "https://avatars.mds.yandex.net/get-kinopoisk-image/"
 	case KinopoiskOttImages:
