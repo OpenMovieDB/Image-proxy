@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
-	"resizer/converter/image"
+	img "resizer/converter/image"
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
@@ -65,7 +65,7 @@ func main() {
 		panic("Failed to create aws session")
 	}
 
-	converterStrategy := image.MustStrategy(logger)
+	converterStrategy := img.MustStrategy(logger)
 
 	//store := redis.New(redis.Config{
 	//	Host:      dragonflyConfig.Host,

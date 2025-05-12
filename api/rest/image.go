@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
-	"net/http"
-	"regexp"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/service"
@@ -18,8 +16,6 @@ type ImageController struct {
 	service *service.ImageService
 	logger  *zap.Logger
 }
-
-var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
 func NewImageController(app *fiber.App, cfg *config.Config, service *service.ImageService, logger *zap.Logger) *ImageController {
 	i := &ImageController{service: service, cfg: cfg, logger: logger}
@@ -93,24 +89,16 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 		return err
 	}
 
-	url := serviceType.ToProxyURL(i.cfg.TMDBImageProxy) + c.Params("*")
-
-	if serviceType.String() == "kinopoisk-images" {
-		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
-	}
-
-	logger.Debug(fmt.Sprintf("Proxying image from Kinopoisk with url: %s", url))
-
-	res, err := http.Get(url)
+	path := c.Params("*")
+	imageResponse, err := i.service.ProxyImage(ctx, serviceType, path)
 	if err != nil {
-		logger.Error("Error proxying image from Kinopoisk", zap.Error(err))
+		logger.Error("Error proxying image", zap.Error(err))
 		return err
 	}
 
-	for k, v := range res.Header {
-		c.Set(k, v[0])
-	}
+	c.Type(imageResponse.Type)
+	c.Set("Content-Length", strconv.Itoa(int(imageResponse.ContentLength)))
+	c.Set("Content-Disposition", imageResponse.ContentDisposition)
 
-	c.Response().Header.Del(fiber.HeaderServer)
-	return c.Status(res.StatusCode).SendStream(res.Body)
+	return c.SendStream(imageResponse.Body)
 }

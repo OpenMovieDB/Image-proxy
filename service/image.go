@@ -1,15 +1,21 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"go.uber.org/zap"
+	"io"
+	"net/http"
+	"regexp"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter/image"
 	"resizer/shared/log"
 )
+
+var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
 type ImageService struct {
 	config *config.Config
@@ -82,4 +88,65 @@ func (i *ImageService) getFromS3(ctx context.Context, params model.ImageRequest)
 	logger.Debug("Image was fetched from S3")
 
 	return result, nil
+}
+
+func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.ServiceName, path string) (*model.ImageResponse, error) {
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	fileKey := fmt.Sprintf("%s/%s", serviceType.String(), path)
+	logger = logger.With(zap.String("fileKey", fileKey))
+
+	result, err := i.s3.GetObject(&s3.GetObjectInput{Bucket: &i.config.S3Bucket, Key: &fileKey})
+	if err == nil {
+		logger.Debug("Image found in S3")
+		return &model.ImageResponse{
+			Body:               result.Body,
+			ContentLength:      *result.ContentLength,
+			ContentDisposition: fmt.Sprintf("inline; filename=%s", fileKey),
+			Type:               *result.ContentType,
+		}, nil
+	}
+
+	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + path
+	if serviceType.String() == "kinopoisk-images" {
+		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
+	}
+
+	logger.Debug(fmt.Sprintf("Proxying image from external service with URL: %s", url))
+
+	res, err := http.Get(url)
+	if err != nil {
+		logger.Error("Error proxying image from external service", zap.Error(err))
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	var buf bytes.Buffer
+	_, err = io.Copy(&buf, res.Body)
+	if err != nil {
+		logger.Error("Error reading response body", zap.Error(err))
+		return nil, err
+	}
+
+	contentType := res.Header.Get("Content-Type")
+
+	_, err = i.s3.PutObject(&s3.PutObjectInput{
+		Bucket:      &i.config.S3Bucket,
+		Key:         &fileKey,
+		Body:        bytes.NewReader(buf.Bytes()),
+		ContentType: &contentType,
+	})
+	if err != nil {
+		logger.Error("Error uploading image to S3", zap.Error(err))
+		return nil, err
+	}
+
+	logger.Debug("Image uploaded to S3")
+
+	return &model.ImageResponse{
+		Body:               res.Body,
+		ContentLength:      res.ContentLength,
+		ContentDisposition: fmt.Sprintf("inline; filename=%s", fileKey),
+		Type:               res.Header.Get("Content-Type"),
+	}, nil
 }
