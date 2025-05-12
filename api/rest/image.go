@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
+	"net/http"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/service"
@@ -85,20 +86,27 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 
 	serviceType, err := model.MakeFromString(c.Params("service_type"))
 	if err != nil {
-		logger.Error("Error parsing service type", zap.Error(err))
+		logger.Error("invalid service_type", zap.Error(err))
 		return err
 	}
+	rawPath := c.Params("*")
 
-	path := c.Params("*")
-	imageResponse, err := i.service.ProxyImage(ctx, serviceType, path)
+	resp, err := i.service.ProxyImage(ctx, serviceType, rawPath)
 	if err != nil {
-		logger.Error("Error proxying image", zap.Error(err))
+		logger.Error("proxy service error", zap.Error(err))
 		return err
 	}
 
-	c.Type(imageResponse.Type)
-	c.Set("Content-Length", strconv.Itoa(int(imageResponse.ContentLength)))
-	c.Set("Content-Disposition", imageResponse.ContentDisposition)
+	if resp.StatusCode != http.StatusOK {
+		return c.SendStatus(resp.StatusCode)
+	}
 
-	return c.SendStream(imageResponse.Body)
+	for k, vals := range resp.Headers {
+		if k == fiber.HeaderServer {
+			continue
+		}
+		c.Set(k, vals[0])
+	}
+
+	return c.Status(http.StatusOK).SendStream(resp.Body)
 }

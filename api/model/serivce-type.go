@@ -46,3 +46,7 @@ func (t ServiceName) ToProxyURL(tmdbProxyURL string) string {
 
 	return ""
 }
+
+func (t ServiceName) IsKinopoiskImages() bool {
+	return t == KinopoiskImages
+}
