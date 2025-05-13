@@ -103,11 +103,9 @@ type ProxyResponse struct {
 func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	// формируем ключ в бакете, например "proxy/tmdb-images/some/dir/file.jpg"
 	key := path.Join("proxy", serviceType.String(), rawPath)
 	bucket := i.config.S3Bucket
 
-	// 1) пробуем взять из S3
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -124,13 +122,12 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 			StatusCode: http.StatusOK,
 		}, nil
 	}
-	// если это не просто «объект не найден», возвращаем ошибку
+
 	if aerr, ok := err.(s3.RequestFailure); !ok || aerr.StatusCode() != http.StatusNotFound {
 		logger.Error("error getting from S3", zap.Error(err), zap.String("key", key))
 		return nil, err
 	}
 
-	// 2) cache miss — подгружаем из внешнего сервиса
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
 	if serviceType.String() == "kinopoisk-images" {
 		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
@@ -149,7 +146,6 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
-	// считаем всё в память (можно оптимизировать стрим-в-стрим, если объёмы большие)
 	buf := bytes.NewBuffer(nil)
 	n, err := io.Copy(buf, res.Body)
 	if err != nil {
@@ -157,7 +153,6 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return nil, err
 	}
 
-	// пушим в S3
 	_, err = i.s3.PutObject(&s3.PutObjectInput{
 		Bucket:        aws.String(bucket),
 		Key:           aws.String(key),
@@ -167,12 +162,12 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	})
 	if err != nil {
 		logger.Error("failed to put object to S3", zap.Error(err), zap.String("key", key))
-		// но даже если кэширование не удалось — отдадим пользователю
 	} else {
 		logger.Debug("cached image in S3", zap.String("key", key))
 	}
 
-	// и возвращаем результат
+	logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
+
 	return &ProxyResponse{
 		Body:       io.NopCloser(bytes.NewReader(buf.Bytes())),
 		Headers:    res.Header,

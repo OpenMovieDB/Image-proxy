@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"fmt"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -10,6 +11,7 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"strconv"
+	"time"
 )
 
 type ImageController struct {
@@ -42,7 +44,8 @@ func NewImageController(app *fiber.App, cfg *config.Config, service *service.Ima
 //	@Success		200		{file}	file	"Returns the processed image"
 //	@Router			/images/{entity}/{file}/{width}/{quality}/{type} [get]
 func (i *ImageController) Process(c *fiber.Ctx) error {
-	ctx := c.UserContext()
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*10)
+	defer cancel()
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
 	params := &model.ImageRequest{}
@@ -81,7 +84,8 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 //	@Success		200				{file}	file	"Returns the proxied image"
 //	@Router			/{service_type}/{path} [get]
 func (i *ImageController) Proxy(c *fiber.Ctx) error {
-	ctx := c.UserContext()
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*10)
+	defer cancel()
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
 	serviceType, err := model.MakeFromString(c.Params("service_type"))
