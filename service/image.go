@@ -108,7 +108,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	bucket := i.config.S3Bucket
 
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
-		Bucket: aws.S	tring(bucket),
+		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	if err == nil {
@@ -139,7 +139,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		logger.Error("http.Get failed", zap.Error(err), zap.String("url", url))
 		return nil, err
 	}
-	
+
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
 		logger.Error("remote returned non-200", zap.Int("status", res.StatusCode))
@@ -147,14 +147,14 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	}
 
 	pipeR, pipeW := io.Pipe()
-	
+
 	go func() {
 		defer res.Body.Close()
 		defer pipeW.Close()
-		
+
 		// Создаем TeeReader для одновременной записи в S3 и передачи клиенту
 		teeReader := io.TeeReader(res.Body, pipeW)
-		
+
 		// Используем s3manager для эффективной загрузки
 		uploader := s3manager.NewUploaderWithClient(i.s3)
 		_, err := uploader.Upload(&s3manager.UploadInput{
@@ -163,16 +163,16 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 			Body:        teeReader,
 			ContentType: aws.String(res.Header.Get("Content-Type")),
 		})
-		
+
 		if err != nil {
 			logger.Error("failed to put object to S3", zap.Error(err), zap.String("key", key))
 		} else {
 			logger.Debug("cached image in S3", zap.String("key", key))
 		}
-		
+
 		logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
 	}()
-	
+
 	return &ProxyResponse{
 		Body:       pipeR,
 		Headers:    res.Header,
