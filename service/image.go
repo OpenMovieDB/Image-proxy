@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"go.uber.org/zap"
 	"io"
 	"net/http"
@@ -117,7 +118,6 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 			Headers: http.Header{
 				"Content-Type":   {aws.StringValue(getOut.ContentType)},
 				"Content-Length": {fmt.Sprint(*getOut.ContentLength)},
-				// сюда можно дописать любые другие необходимые h-eaders
 			},
 			StatusCode: http.StatusOK,
 		}, nil
@@ -139,37 +139,42 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		logger.Error("http.Get failed", zap.Error(err), zap.String("url", url))
 		return nil, err
 	}
-	defer res.Body.Close()
-
+	
 	if res.StatusCode != http.StatusOK {
+		res.Body.Close()
 		logger.Error("remote returned non-200", zap.Int("status", res.StatusCode))
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
-	buf := bytes.NewBuffer(nil)
-	n, err := io.Copy(buf, res.Body)
-	if err != nil {
-		logger.Error("read remote body failed", zap.Error(err))
-		return nil, err
-	}
-
-	_, err = i.s3.PutObject(&s3.PutObjectInput{
-		Bucket:        aws.String(bucket),
-		Key:           aws.String(key),
-		Body:          bytes.NewReader(buf.Bytes()),
-		ContentType:   aws.String(res.Header.Get("Content-Type")),
-		ContentLength: aws.Int64(int64(n)),
-	})
-	if err != nil {
-		logger.Error("failed to put object to S3", zap.Error(err), zap.String("key", key))
-	} else {
-		logger.Debug("cached image in S3", zap.String("key", key))
-	}
-
-	logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
-
+	pipeR, pipeW := io.Pipe()
+	
+	go func() {
+		defer res.Body.Close()
+		defer pipeW.Close()
+		
+		// Создаем TeeReader для одновременной записи в S3 и передачи клиенту
+		teeReader := io.TeeReader(res.Body, pipeW)
+		
+		// Используем s3manager для эффективной загрузки
+		uploader := s3manager.NewUploaderWithClient(i.s3)
+		_, err := uploader.Upload(&s3manager.UploadInput{
+			Bucket:      aws.String(bucket),
+			Key:         aws.String(key),
+			Body:        teeReader,
+			ContentType: aws.String(res.Header.Get("Content-Type")),
+		})
+		
+		if err != nil {
+			logger.Error("failed to put object to S3", zap.Error(err), zap.String("key", key))
+		} else {
+			logger.Debug("cached image in S3", zap.String("key", key))
+		}
+		
+		logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
+	}()
+	
 	return &ProxyResponse{
-		Body:       io.NopCloser(bytes.NewReader(buf.Bytes())),
+		Body:       pipeR,
 		Headers:    res.Header,
 		StatusCode: http.StatusOK,
 	}, nil
