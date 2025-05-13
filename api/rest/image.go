@@ -84,7 +84,7 @@ func (i *ImageController) Process(c *fiber.Ctx) error {
 //	@Success		200				{file}	file	"Returns the proxied image"
 //	@Router			/{service_type}/{path} [get]
 func (i *ImageController) Proxy(c *fiber.Ctx) error {
-	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*10)
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*15)
 	defer cancel()
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
