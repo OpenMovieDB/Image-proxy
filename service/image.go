@@ -106,13 +106,16 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	key := path.Join("proxy", serviceType.String(), rawPath)
 	bucket := i.config.S3Bucket
 
+	// Пытаемся получить объект из S3
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
+
+	// Если объект найден и это не HTML - возвращаем его
 	if err == nil && (getOut.ContentType == nil || *getOut.ContentType != "text/html") {
-		// Используем объект из S3 только если это не text/html страница с ошибкой
 		logger.Debug("cache hit", zap.String("key", key))
+
 		headers := http.Header{}
 		if getOut.ContentType != nil {
 			headers.Set("Content-Type", aws.StringValue(getOut.ContentType))
@@ -128,11 +131,13 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		}, nil
 	}
 
-	// Закроем body если получили text/html или что-то другое не то
+	// Закрываем тело если нашли HTML
 	if err == nil {
 		getOut.Body.Close()
+		logger.Debug("found HTML in cache, refetching from vendor", zap.String("key", key))
 	}
 
+	// Проверяем ошибку S3, если это не 404
 	if err != nil && !isNotFoundError(err) {
 		logger.Error("error getting from S3", zap.Error(err), zap.String("key", key))
 		return nil, err
@@ -142,32 +147,29 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	if serviceType.String() == "kinopoisk-images" {
 		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
 	}
-	logger.Debug("cache miss, fetching remotely", zap.String("url", url))
+	logger.Debug("fetching from vendor", zap.String("url", url))
 
+	// Запрашиваем изображение у вендора
 	res, err := http.Get(url)
 	if err != nil {
 		logger.Error("http.Get failed", zap.Error(err), zap.String("url", url))
 		return nil, err
 	}
 
+	// Проверяем статус ответа
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
-		logger.Error("remote returned non-200", zap.Int("status", res.StatusCode))
+		logger.Error("vendor returned non-200", zap.Int("status", res.StatusCode))
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
-	// Проверяем, что мы получили изображение, а не страницу с ошибкой
+	// Получаем Content-Type
 	contentType := res.Header.Get("Content-Type")
-	if contentType == "text/html" {
-		res.Body.Close()
-		logger.Error("remote returned HTML instead of image", zap.String("url", url))
-		return &ProxyResponse{StatusCode: http.StatusNotFound}, nil
-	}
 
-	// Создаем pipe для потоковой передачи данных
+	// Создаем pipe для стриминга
 	pipeR, pipeW := io.Pipe()
 
-	// Копируем необходимые заголовки
+	// Подготавливаем заголовки для ответа
 	headers := make(http.Header)
 	if contentType != "" {
 		headers.Set("Content-Type", contentType)
@@ -176,15 +178,15 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		headers.Set("Content-Length", contentLength)
 	}
 
-	// Запускаем горутину для копирования данных и кэширования в S3
+	// Запускаем горутину для одновременной передачи клиенту и кеширования
 	go func() {
 		defer res.Body.Close()
 		defer pipeW.Close()
 
-		// Создаем TeeReader для одновременной записи в S3 и передачи клиенту
+		// TeeReader для одновременной записи в S3 и клиенту
 		teeReader := io.TeeReader(res.Body, pipeW)
 
-		// Используем s3manager для эффективной загрузки
+		// Загружаем в S3
 		uploader := s3manager.NewUploaderWithClient(i.s3)
 		_, err := uploader.Upload(&s3manager.UploadInput{
 			Bucket:      aws.String(bucket),
@@ -194,14 +196,15 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		})
 
 		if err != nil {
-			logger.Error("failed to put object to S3", zap.Error(err), zap.String("key", key))
+			logger.Error("failed to cache in S3", zap.Error(err), zap.String("key", key))
 		} else {
-			logger.Debug("cached image in S3", zap.String("key", key))
+			logger.Debug("cached in S3", zap.String("key", key))
 		}
 
 		logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
 	}()
 
+	// Возвращаем ответ клиенту
 	return &ProxyResponse{
 		Body:       pipeR,
 		Headers:    headers,
