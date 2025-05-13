@@ -110,19 +110,30 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-	if err == nil {
+	if err == nil && (getOut.ContentType == nil || *getOut.ContentType != "text/html") {
+		// Используем объект из S3 только если это не text/html страница с ошибкой
 		logger.Debug("cache hit", zap.String("key", key))
+		headers := http.Header{}
+		if getOut.ContentType != nil {
+			headers.Set("Content-Type", aws.StringValue(getOut.ContentType))
+		}
+		if getOut.ContentLength != nil {
+			headers.Set("Content-Length", fmt.Sprint(*getOut.ContentLength))
+		}
+
 		return &ProxyResponse{
-			Body: getOut.Body,
-			Headers: http.Header{
-				"Content-Type":   {aws.StringValue(getOut.ContentType)},
-				"Content-Length": {fmt.Sprint(*getOut.ContentLength)},
-			},
+			Body:       getOut.Body,
+			Headers:    headers,
 			StatusCode: http.StatusOK,
 		}, nil
 	}
 
-	if aerr, ok := err.(s3.RequestFailure); !ok || aerr.StatusCode() != http.StatusNotFound {
+	// Закроем body если получили text/html или что-то другое не то
+	if err == nil {
+		getOut.Body.Close()
+	}
+
+	if err != nil && !isNotFoundError(err) {
 		logger.Error("error getting from S3", zap.Error(err), zap.String("key", key))
 		return nil, err
 	}
@@ -145,8 +156,27 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
+	// Проверяем, что мы получили изображение, а не страницу с ошибкой
+	contentType := res.Header.Get("Content-Type")
+	if contentType == "text/html" {
+		res.Body.Close()
+		logger.Error("remote returned HTML instead of image", zap.String("url", url))
+		return &ProxyResponse{StatusCode: http.StatusNotFound}, nil
+	}
+
+	// Создаем pipe для потоковой передачи данных
 	pipeR, pipeW := io.Pipe()
 
+	// Копируем необходимые заголовки
+	headers := make(http.Header)
+	if contentType != "" {
+		headers.Set("Content-Type", contentType)
+	}
+	if contentLength := res.Header.Get("Content-Length"); contentLength != "" {
+		headers.Set("Content-Length", contentLength)
+	}
+
+	// Запускаем горутину для копирования данных и кэширования в S3
 	go func() {
 		defer res.Body.Close()
 		defer pipeW.Close()
@@ -160,7 +190,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 			Bucket:      aws.String(bucket),
 			Key:         aws.String(key),
 			Body:        teeReader,
-			ContentType: aws.String(res.Header.Get("Content-Type")),
+			ContentType: aws.String(contentType),
 		})
 
 		if err != nil {
@@ -174,7 +204,15 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	return &ProxyResponse{
 		Body:       pipeR,
-		Headers:    res.Header,
+		Headers:    headers,
 		StatusCode: http.StatusOK,
 	}, nil
+}
+
+// Вспомогательная функция для проверки ошибки NotFound
+func isNotFoundError(err error) bool {
+	if aerr, ok := err.(s3.RequestFailure); ok && aerr.StatusCode() == http.StatusNotFound {
+		return true
+	}
+	return false
 }
