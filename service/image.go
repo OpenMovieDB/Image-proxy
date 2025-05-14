@@ -106,6 +106,13 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	key := path.Join("proxy", serviceType.String(), rawPath)
 	bucket := i.config.S3Bucket
 
+	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
+
+	if serviceType.IsKinopoiskImages() {
+		key = kinopoiskSizes.ReplaceAllString(key, "x660")
+		url = kinopoiskSizes.ReplaceAllString(url, "x660")
+	}
+
 	// Пытаемся получить объект из S3
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -143,10 +150,6 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return nil, err
 	}
 
-	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
-	if serviceType.String() == "kinopoisk-images" {
-		url = kinopoiskSizes.ReplaceAllString(url, "440x660")
-	}
 	logger.Debug("fetching from vendor", zap.String("url", url))
 
 	// Запрашиваем изображение у вендора
