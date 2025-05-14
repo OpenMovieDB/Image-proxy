@@ -107,25 +107,14 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
 
-	logger.Debug("checking key existence in cache", zap.String("key", key))
-	
-	headOut, err := i.s3.HeadObject(&s3.HeadObjectInput{
+	logger.Debug("trying to get object from cache", zap.String("key", key))
+
+	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 
-	if err == nil && (headOut.ContentType == nil || *headOut.ContentType != "text/html") {				// Теперь получаем сам объект
-		logger.Debug("getting object from cache", zap.String("key", key))
-		getOut, err := i.s3.GetObject(&s3.GetObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
-		
-		if err != nil {
-			logger.Error("error getting object from cache", zap.Error(err), zap.String("key", key))
-			return nil, err
-		}
-		
+	if err == nil && (getOut.ContentType == nil || *getOut.ContentType != "text/html") {
 		logger.Debug("object successfully retrieved from cache", zap.String("key", key))
 
 		headers := http.Header{}
@@ -144,7 +133,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	}
 
 	if err != nil && !isNotFoundError(err) {
-		logger.Error("error checking cache", zap.Error(err), zap.String("key", key))
+		logger.Error("error getting object from cache", zap.Error(err), zap.String("key", key))
 		return nil, err
 	}
 
@@ -167,7 +156,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		logger.Error("vendor returned non-200 status", zap.Int("status", res.StatusCode))
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
-	
+
 	logger.Debug("response received from vendor", zap.String("url", url))
 
 	contentType := res.Header.Get("Content-Type")
