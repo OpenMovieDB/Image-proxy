@@ -107,26 +107,26 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
 
-	// Сначала проверяем только наличие объекта в S3 без загрузки содержимого
+	logger.Debug("checking key existence in cache", zap.String("key", key))
+	
 	headOut, err := i.s3.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 
-	// Если объект найден и это не HTML - загружаем его
-	if err == nil && (headOut.ContentType == nil || *headOut.ContentType != "text/html") {
-		logger.Debug("cache hit", zap.String("key", key))
-
-		// Теперь получаем сам объект
+	if err == nil && (headOut.ContentType == nil || *headOut.ContentType != "text/html") {				// Теперь получаем сам объект
+		logger.Debug("getting object from cache", zap.String("key", key))
 		getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 		})
-
+		
 		if err != nil {
-			logger.Error("error getting object from S3 after head check", zap.Error(err), zap.String("key", key))
+			logger.Error("error getting object from cache", zap.Error(err), zap.String("key", key))
 			return nil, err
 		}
+		
+		logger.Debug("object successfully retrieved from cache", zap.String("key", key))
 
 		headers := http.Header{}
 		if getOut.ContentType != nil {
@@ -143,42 +143,37 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		}, nil
 	}
 
-	// Проверяем ошибку S3, если это не 404
 	if err != nil && !isNotFoundError(err) {
-		logger.Error("error checking S3", zap.Error(err), zap.String("key", key))
+		logger.Error("error checking cache", zap.Error(err), zap.String("key", key))
 		return nil, err
 	}
 
-	// Если объект не найден или это HTML, запрашиваем у вендора
 	if err != nil {
-		logger.Debug("cache miss", zap.String("key", key))
+		logger.Debug("object not found in cache", zap.String("key", key))
 	} else {
-		logger.Debug("found HTML in cache, refetching from vendor", zap.String("key", key))
+		logger.Debug("HTML found in cache, refetching from vendor", zap.String("key", key))
 	}
 
-	logger.Debug("fetching from vendor", zap.String("url", url))
+	logger.Debug("requesting image from vendor", zap.String("url", url))
 
-	// Запрашиваем изображение у вендора
 	res, err := http.Get(url)
 	if err != nil {
-		logger.Error("http.Get failed", zap.Error(err), zap.String("url", url))
+		logger.Error("vendor request failed", zap.Error(err), zap.String("url", url))
 		return nil, err
 	}
 
-	// Проверяем статус ответа
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
-		logger.Error("vendor returned non-200", zap.Int("status", res.StatusCode))
+		logger.Error("vendor returned non-200 status", zap.Int("status", res.StatusCode))
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
+	
+	logger.Debug("response received from vendor", zap.String("url", url))
 
-	// Получаем Content-Type
 	contentType := res.Header.Get("Content-Type")
 
-	// Создаем pipe для стриминга
 	pipeR, pipeW := io.Pipe()
 
-	// Подготавливаем заголовки для ответа
 	headers := make(http.Header)
 	if contentType != "" {
 		headers.Set("Content-Type", contentType)
@@ -187,15 +182,14 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		headers.Set("Content-Length", contentLength)
 	}
 
-	// Запускаем горутину для одновременной передачи клиенту и кеширования
 	go func() {
 		defer res.Body.Close()
 		defer pipeW.Close()
 
-		// TeeReader для одновременной записи в S3 и клиенту
+		logger.Debug("starting image caching to S3", zap.String("key", key))
+
 		teeReader := io.TeeReader(res.Body, pipeW)
 
-		// Загружаем в S3
 		uploader := s3manager.NewUploaderWithClient(i.s3)
 		_, err := uploader.Upload(&s3manager.UploadInput{
 			Bucket:      aws.String(bucket),
@@ -207,13 +201,12 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		if err != nil {
 			logger.Error("failed to cache in S3", zap.Error(err), zap.String("key", key))
 		} else {
-			logger.Debug("cached in S3", zap.String("key", key))
+			logger.Debug("image successfully cached in S3", zap.String("key", key))
 		}
 
 		logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
 	}()
 
-	// Возвращаем ответ клиенту
 	return &ProxyResponse{
 		Body:       pipeR,
 		Headers:    headers,
@@ -221,7 +214,6 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	}, nil
 }
 
-// Вспомогательная функция для проверки ошибки NotFound
 func isNotFoundError(err error) bool {
 	if aerr, ok := err.(s3.RequestFailure); ok && aerr.StatusCode() == http.StatusNotFound {
 		return true
