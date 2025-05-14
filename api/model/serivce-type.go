@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 type ServiceName struct {
 	s string
@@ -12,6 +15,8 @@ var (
 	KinopoiskOttImages = ServiceName{"kinopoisk-ott-images"}
 	KinopoiskStImages  = ServiceName{"kinopoisk-st-images"}
 )
+
+var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
 func (t ServiceName) String() string {
 	return t.s
@@ -32,19 +37,42 @@ func MakeFromString(s string) (ServiceName, error) {
 	return ServiceName{}, fmt.Errorf("unknown type: %s", s)
 }
 
+func (t ServiceName) GetReplaceSize() string {
+	switch t {
+	case KinopoiskImages:
+		return "440x660"
+	case KinopoiskOttImages, KinopoiskStImages:
+		return "x660"
+	default:
+		return ""
+	}
+}
+
 func (t ServiceName) ToProxyURL(tmdbProxyURL string) string {
+	baseURL := ""
+
 	switch t {
 	case TmdbImages:
 		return tmdbProxyURL + "?url=" + "https://www.themoviedb.org/t/p/"
 	case KinopoiskImages:
-		return "https://avatars.mds.yandex.net/get-kinopoisk-image/"
+		baseURL = "https://avatars.mds.yandex.net/get-kinopoisk-image/"
 	case KinopoiskOttImages:
-		return "https://avatars.mds.yandex.net/get-ott/"
+		baseURL = "https://avatars.mds.yandex.net/get-ott/"
 	case KinopoiskStImages:
-		return "https://st.kp.yandex.net/images/"
+		baseURL = "https://st.kp.yandex.net/images/"
+	default:
+		return ""
 	}
 
-	return ""
+	return baseURL
+}
+
+func (t ServiceName) TransformPath(path string) string {
+	size := t.GetReplaceSize()
+	if size != "" && kinopoiskSizes.MatchString(path) {
+		return kinopoiskSizes.ReplaceAllString(path, size)
+	}
+	return path
 }
 
 func (t ServiceName) IsKinopoiskImages() bool {

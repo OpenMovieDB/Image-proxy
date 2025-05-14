@@ -11,14 +11,12 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"regexp"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter/image"
 	"resizer/shared/log"
 )
 
-var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 var ErrNotFound = errors.New("object not found in S3")
 
 type ImageService struct {
@@ -103,15 +101,11 @@ type ProxyResponse struct {
 func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	key := path.Join("proxy", serviceType.String(), rawPath)
+	transformedPath := serviceType.TransformPath(rawPath)
+	key := path.Join("proxy", serviceType.String(), transformedPath)
 	bucket := i.config.S3Bucket
 
-	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
-
-	if serviceType.IsKinopoiskImages() {
-		key = kinopoiskSizes.ReplaceAllString(key, "x660")
-		url = kinopoiskSizes.ReplaceAllString(url, "x660")
-	}
+	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
 
 	// Пытаемся получить объект из S3
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
