@@ -107,15 +107,26 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
 
-	// Пытаемся получить объект из S3
-	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
+	// Сначала проверяем только наличие объекта в S3 без загрузки содержимого
+	headOut, err := i.s3.HeadObject(&s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 
-	// Если объект найден и это не HTML - возвращаем его
-	if err == nil && (getOut.ContentType == nil || *getOut.ContentType != "text/html") {
+	// Если объект найден и это не HTML - загружаем его
+	if err == nil && (headOut.ContentType == nil || *headOut.ContentType != "text/html") {
 		logger.Debug("cache hit", zap.String("key", key))
+
+		// Теперь получаем сам объект
+		getOut, err := i.s3.GetObject(&s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+
+		if err != nil {
+			logger.Error("error getting object from S3 after head check", zap.Error(err), zap.String("key", key))
+			return nil, err
+		}
 
 		headers := http.Header{}
 		if getOut.ContentType != nil {
@@ -132,16 +143,17 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		}, nil
 	}
 
-	// Закрываем тело если нашли HTML
-	if err == nil {
-		getOut.Body.Close()
-		logger.Debug("found HTML in cache, refetching from vendor", zap.String("key", key))
-	}
-
 	// Проверяем ошибку S3, если это не 404
 	if err != nil && !isNotFoundError(err) {
-		logger.Error("error getting from S3", zap.Error(err), zap.String("key", key))
+		logger.Error("error checking S3", zap.Error(err), zap.String("key", key))
 		return nil, err
+	}
+
+	// Если объект не найден или это HTML, запрашиваем у вендора
+	if err != nil {
+		logger.Debug("cache miss", zap.String("key", key))
+	} else {
+		logger.Debug("found HTML in cache, refetching from vendor", zap.String("key", key))
 	}
 
 	logger.Debug("fetching from vendor", zap.String("url", url))
