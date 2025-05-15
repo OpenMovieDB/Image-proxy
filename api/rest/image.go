@@ -112,5 +112,7 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 		c.Set(k, vals[0])
 	}
 
+	c.Set("Cache-Control", "max-age=604800,immutable")
+
 	return c.Status(http.StatusOK).SendStream(resp.Body)
 }
