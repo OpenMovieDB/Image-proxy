@@ -1,14 +1,17 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"path"
 	"resizer/api/model"
@@ -26,11 +29,13 @@ type ImageService struct {
 
 	strategy *image.Strategy
 
+	redis *redis.Client
+
 	logger *zap.Logger
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
-	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
+func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger, redis *redis.Client) *ImageService {
+	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger, redis: redis}
 }
 
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
@@ -93,9 +98,11 @@ func (i *ImageService) getFromS3(ctx context.Context, params model.ImageRequest)
 }
 
 type ProxyResponse struct {
-	Body       io.ReadCloser
-	Headers    http.Header
-	StatusCode int
+	Body        io.ReadCloser
+	Headers     http.Header
+	StatusCode  int
+	rawBytes    []byte
+	contentType string
 }
 
 func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
@@ -104,103 +111,236 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	transformedPath := serviceType.TransformPath(rawPath)
 	key := path.Join("proxy", serviceType.String(), transformedPath)
 	bucket := i.config.S3Bucket
-
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
+	redisKey := fmt.Sprintf("img:%s", key)
 
-	logger.Debug("trying to get object from cache", zap.String("key", key))
+	// 1. Пробуем получить из Redis если кеширование включено
+	if i.config.UseRedisCache && i.redis != nil {
+		logger.Debug("проверяем Redis кеш", zap.String("key", redisKey))
+		imageData, err := i.tryGetFromRedis(ctx, redisKey)
+		if err == nil {
+			logger.Info("изображение получено из Redis кеша", zap.String("key", redisKey))
+			return imageData, nil
+		}
+		logger.Debug("не найдено в Redis", zap.Error(err))
+	}
 
+	// 2. Пробуем получить из S3
+	logger.Debug("проверяем S3 кеш", zap.String("key", key))
+	imageData, err := i.tryGetFromS3(ctx, bucket, key)
+	if err == nil {
+		// Если нашли в S3 и Redis включен, кешируем в Redis
+		if i.config.UseRedisCache && i.redis != nil {
+			i.cacheInRedis(ctx, redisKey, imageData)
+		}
+		logger.Info("изображение получено из S3", zap.String("key", key))
+		return imageData, nil
+	}
+
+	if !isNotFoundError(err) {
+		logger.Error("ошибка при получении из S3", zap.Error(err))
+		return nil, err
+	}
+
+	logger.Debug("не найдено в S3", zap.String("key", key))
+
+	// 3. Получаем от внешнего сервиса
+	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
+	imageData, err = i.fetchFromExternalService(ctx, url)
+	if err != nil {
+		logger.Error("ошибка при запросе к внешнему сервису", zap.Error(err))
+		return nil, err
+	}
+
+	// 4. Кешируем результат
+	// В Redis (если включено)
+	if i.config.UseRedisCache && i.redis != nil {
+		i.cacheInRedis(ctx, redisKey, imageData)
+	}
+
+	// В S3 (асинхронно)
+	go i.cacheInS3(bucket, key, imageData, url)
+
+	logger.Info("изображение получено от внешнего сервиса", zap.String("url", url))
+	return imageData, nil
+}
+
+// tryGetFromRedis пытается получить изображение из Redis кеша
+func (i *ImageService) tryGetFromRedis(ctx context.Context, key string) (*ProxyResponse, error) {
+	cachedData, err := i.redis.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, err
+	}
+
+	// Формат данных: [2 байта размера заголовка][заголовки][содержимое]
+	headerSize := int(cachedData[0])*256 + int(cachedData[1])
+
+	headers := http.Header{}
+	contentType := ""
+	if headerSize > 0 {
+		contentType = string(cachedData[2 : 2+headerSize])
+		headers.Set("Content-Type", contentType)
+		headers.Set("Content-Length", fmt.Sprint(len(cachedData)-2-headerSize))
+	}
+
+	imageBytes := cachedData[2+headerSize:]
+	bodyReader := io.NopCloser(bytes.NewReader(imageBytes))
+
+	return &ProxyResponse{
+		Body:        bodyReader,
+		Headers:     headers,
+		StatusCode:  http.StatusOK,
+		rawBytes:    imageBytes,
+		contentType: contentType,
+	}, nil
+}
+
+// tryGetFromS3 пытается получить изображение из S3
+func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*ProxyResponse, error) {
 	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 
-	if err == nil && (getOut.ContentType == nil || *getOut.ContentType != "text/html") {
-		logger.Debug("object successfully retrieved from cache", zap.String("key", key))
-
-		headers := http.Header{}
-		if getOut.ContentType != nil {
-			headers.Set("Content-Type", aws.StringValue(getOut.ContentType))
-		}
-		if getOut.ContentLength != nil {
-			headers.Set("Content-Length", fmt.Sprint(*getOut.ContentLength))
-		}
-
-		return &ProxyResponse{
-			Body:       getOut.Body,
-			Headers:    headers,
-			StatusCode: http.StatusOK,
-		}, nil
-	}
-
-	if err != nil && !isNotFoundError(err) {
-		logger.Error("error getting object from cache", zap.Error(err), zap.String("key", key))
+	if err != nil {
 		return nil, err
 	}
 
-	if err != nil {
-		logger.Debug("object not found in cache", zap.String("key", key))
-	} else {
-		logger.Debug("HTML found in cache, refetching from vendor", zap.String("key", key))
+	// Проверяем, что это не HTML ошибка (некоторые S3 сервисы возвращают HTML страницы ошибок)
+	if getOut.ContentType != nil && *getOut.ContentType == "text/html" {
+		getOut.Body.Close()
+		return nil, errors.New("object is HTML page")
 	}
 
-	logger.Debug("requesting image from vendor", zap.String("url", url))
+	headers := http.Header{}
+	contentType := ""
+	if getOut.ContentType != nil {
+		contentType = aws.StringValue(getOut.ContentType)
+		headers.Set("Content-Type", contentType)
+	}
+	if getOut.ContentLength != nil {
+		headers.Set("Content-Length", fmt.Sprint(*getOut.ContentLength))
+	}
 
+	// Читаем все содержимое для кеширования в Redis
+	bodyBytes, err := ioutil.ReadAll(getOut.Body)
+	getOut.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ProxyResponse{
+		Body:        io.NopCloser(bytes.NewReader(bodyBytes)),
+		Headers:     headers,
+		StatusCode:  http.StatusOK,
+		rawBytes:    bodyBytes,
+		contentType: contentType,
+	}, nil
+}
+
+// fetchFromExternalService получает изображение от внешнего сервиса
+func (i *ImageService) fetchFromExternalService(ctx context.Context, url string) (*ProxyResponse, error) {
 	res, err := http.Get(url)
 	if err != nil {
-		logger.Error("vendor request failed", zap.Error(err), zap.String("url", url))
 		return nil, err
 	}
 
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
-		logger.Error("vendor returned non-200 status", zap.Int("status", res.StatusCode))
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
-	logger.Debug("response received from vendor", zap.String("url", url))
-
-	contentType := res.Header.Get("Content-Type")
-
-	pipeR, pipeW := io.Pipe()
+	bodyBytes, err := ioutil.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		return nil, err
+	}
 
 	headers := make(http.Header)
+	contentType := res.Header.Get("Content-Type")
 	if contentType != "" {
 		headers.Set("Content-Type", contentType)
 	}
-	if contentLength := res.Header.Get("Content-Length"); contentLength != "" {
-		headers.Set("Content-Length", contentLength)
-	}
-
-	go func() {
-		defer res.Body.Close()
-		defer pipeW.Close()
-
-		logger.Debug("starting image caching to S3", zap.String("key", key))
-
-		teeReader := io.TeeReader(res.Body, pipeW)
-
-		uploader := s3manager.NewUploaderWithClient(i.s3)
-		_, err := uploader.Upload(&s3manager.UploadInput{
-			Bucket:      aws.String(bucket),
-			Key:         aws.String(key),
-			Body:        teeReader,
-			ContentType: aws.String(contentType),
-		})
-
-		if err != nil {
-			logger.Error("failed to cache in S3", zap.Error(err), zap.String("key", key))
-		} else {
-			logger.Debug("image successfully cached in S3", zap.String("key", key))
-		}
-
-		logger.Info("image proxied", zap.String("url", url), zap.String("key", key))
-	}()
+	headers.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
 
 	return &ProxyResponse{
-		Body:       pipeR,
-		Headers:    headers,
-		StatusCode: http.StatusOK,
+		Body:        io.NopCloser(bytes.NewReader(bodyBytes)),
+		Headers:     headers,
+		StatusCode:  http.StatusOK,
+		rawBytes:    bodyBytes,
+		contentType: contentType,
 	}, nil
+}
+
+// cacheInRedis кеширует изображение в Redis
+func (i *ImageService) cacheInRedis(ctx context.Context, key string, resp *ProxyResponse) {
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	// Если байты еще не извлечены, использовать пустой массив
+	var imageBytes []byte
+	var contentType string
+
+	if resp.rawBytes != nil {
+		imageBytes = resp.rawBytes
+	} else {
+		logger.Debug("пропускаем кеширование в Redis - нет доступных байтов")
+		return
+	}
+
+	if ct := resp.Headers.Get("Content-Type"); ct != "" {
+		contentType = ct
+	} else if resp.contentType != "" {
+		contentType = resp.contentType
+	}
+
+	headerSize := len(contentType)
+	cacheData := make([]byte, 2+headerSize+len(imageBytes))
+
+	// Формат: [2 байта размера заголовка][заголовок contentType][содержимое]
+	cacheData[0] = byte(headerSize / 256)
+	cacheData[1] = byte(headerSize % 256)
+	copy(cacheData[2:2+headerSize], []byte(contentType))
+	copy(cacheData[2+headerSize:], imageBytes)
+
+	err := i.redis.Set(ctx, key, cacheData, i.config.RedisCacheTTL).Err()
+	if err != nil {
+		logger.Error("ошибка сохранения в Redis", zap.Error(err), zap.String("key", key))
+	} else {
+		logger.Debug("успешно сохранено в Redis", zap.String("key", key))
+	}
+}
+
+// cacheInS3 асинхронно кеширует изображение в S3
+func (i *ImageService) cacheInS3(bucket, key string, resp *ProxyResponse, url string) {
+	logger := i.logger
+
+	if resp.rawBytes == nil || len(resp.rawBytes) == 0 {
+		logger.Error("пропускаем кеширование в S3 - нет доступных байтов")
+		return
+	}
+
+	contentType := resp.Headers.Get("Content-Type")
+	if contentType == "" && resp.contentType != "" {
+		contentType = resp.contentType
+	}
+
+	logger.Debug("начинаем кеширование в S3", zap.String("key", key))
+
+	uploader := s3manager.NewUploaderWithClient(i.s3)
+	_, err := uploader.Upload(&s3manager.UploadInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(resp.rawBytes),
+		ContentType: aws.String(contentType),
+	})
+
+	if err != nil {
+		logger.Error("ошибка кеширования в S3", zap.Error(err), zap.String("key", key))
+	} else {
+		logger.Debug("успешно сохранено в S3", zap.String("key", key))
+	}
+
+	logger.Info("изображение прокcировано", zap.String("url", url), zap.String("key", key))
 }
 
 func isNotFoundError(err error) bool {

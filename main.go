@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -10,13 +11,13 @@ import (
 	"github.com/gofiber/contrib/otelfiber/v2"
 	"github.com/gofiber/contrib/swagger"
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cache"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/etag"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
@@ -70,16 +71,25 @@ func main() {
 
 	converterStrategy := img.MustStrategy(logger)
 
-	//store := redis.New(redis.Config{
-	//	Host:      dragonflyConfig.Host,
-	//	Port:      dragonflyConfig.Port,
-	//	Username:  "",
-	//	Password:  dragonflyConfig.Password,
-	//	Database:  3,
-	//	Reset:     false,
-	//	TLSConfig: nil,
-	//	PoolSize:  10 * runtime.GOMAXPROCS(0),
-	//})
+	var redisClient *redis.Client
+	if serviceConfig.UseRedisCache {
+		redisClient = redis.NewClient(&redis.Options{
+			Addr:     fmt.Sprintf("%s:%d", dragonflyConfig.Host, dragonflyConfig.Port),
+			Password: dragonflyConfig.Password,
+			DB:       dragonflyConfig.DB,
+			PoolSize: 10 * runtime.GOMAXPROCS(0),
+		})
+
+		_, err = redisClient.Ping(ctx).Result()
+		if err != nil {
+			logger.Error("Failed to connect to Redis", zap.Error(err))
+			serviceConfig.UseRedisCache = false
+		} else {
+			logger.Info("Successfully connected to Redis")
+		}
+	} else {
+		logger.Info("Redis cache is disabled")
+	}
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
@@ -101,15 +111,9 @@ func main() {
 			Path:     "docs",
 			Title:    "OpenMovieDB Image Proxy service",
 		}),
-		//cache.New(cache.Config{
-		//	Expiration:           serviceConfig.CacheTTL,
-		//	CacheControl:         true,
-		//	StoreResponseHeaders: true,
-		//	Storage:              store,
-		//}),
 	)
 
-	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
+	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger, redisClient)
 
 	rest.NewImageController(app, serviceConfig, imageService, logger)
 
