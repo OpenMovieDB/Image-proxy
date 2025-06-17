@@ -108,10 +108,9 @@ type ProxyResponse struct {
 func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
 	logger := log.LoggerWithTrace(ctx, i.logger)
 
-	transformedPath := serviceType.TransformPath(rawPath)
-	key := path.Join("proxy", serviceType.String(), transformedPath)
+	key := path.Join("proxy", serviceType.String(), rawPath)
 	bucket := i.config.S3Bucket
-	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + transformedPath
+	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
 	redisKey := fmt.Sprintf("img:%s", key)
 
 	// 1. Пробуем получить из Redis если кеширование включено

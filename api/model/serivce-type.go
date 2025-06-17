@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"regexp"
 )
 
 type ServiceName struct {
@@ -15,8 +14,6 @@ var (
 	KinopoiskOttImages = ServiceName{"kinopoisk-ott-images"}
 	KinopoiskStImages  = ServiceName{"kinopoisk-st-images"}
 )
-
-var kinopoiskSizes = regexp.MustCompile(`(x1000|orig)$`)
 
 func (t ServiceName) String() string {
 	return t.s
@@ -65,14 +62,6 @@ func (t ServiceName) ToProxyURL(tmdbProxyURL string) string {
 	}
 
 	return baseURL
-}
-
-func (t ServiceName) TransformPath(path string) string {
-	size := t.GetReplaceSize()
-	if size != "" && kinopoiskSizes.MatchString(path) {
-		return kinopoiskSizes.ReplaceAllString(path, size)
-	}
-	return path
 }
 
 func (t ServiceName) IsKinopoiskImages() bool {
