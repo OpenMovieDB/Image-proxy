@@ -16,7 +16,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
-	"go.uber.org/zap"
 	"log/slog"
 	"resizer/api/rest"
 	"resizer/config"
@@ -24,7 +23,6 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
-	"runtime"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -68,7 +66,6 @@ func main() {
 	}
 
 	converterStrategy := img.MustStrategy(logger)
-
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
