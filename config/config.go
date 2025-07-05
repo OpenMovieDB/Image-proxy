@@ -13,9 +13,7 @@ type Config struct {
 	RateLimitMaxRequests int           `env:"RATE_LIMIT_MAX_REQUESTS" envDefault:"100"`
 	RateLimitDuration    time.Duration `env:"RATE_LIMIT_DURATION" envDefault:"1s"`
 
-	CacheTTL      time.Duration `env:"CACHE_TTL" envDefault:"10m"`
-	UseRedisCache bool          `env:"USE_REDIS_CACHE" envDefault:"true"`
-	RedisCacheTTL time.Duration `env:"REDIS_CACHE_TTL" envDefault:"30m"`
+	CacheTTL time.Duration `env:"CACHE_TTL" envDefault:"10m"`
 
 	S3Region    string `env:"S3_REGION"`
 	S3Bucket    string `env:"S3_BUCKET,required"`

@@ -16,7 +16,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"log/slog"
 	"resizer/api/rest"
@@ -35,7 +34,6 @@ import (
 // @BasePath	/
 func main() {
 	serviceConfig := config.New()
-	dragonflyConfig := config.NewDragonflyConfig()
 
 	ctx := context.Background()
 
@@ -71,25 +69,6 @@ func main() {
 
 	converterStrategy := img.MustStrategy(logger)
 
-	var redisClient *redis.Client
-	if serviceConfig.UseRedisCache {
-		redisClient = redis.NewClient(&redis.Options{
-			Addr:     fmt.Sprintf("%s:%d", dragonflyConfig.Host, dragonflyConfig.Port),
-			Password: dragonflyConfig.Password,
-			DB:       dragonflyConfig.DB,
-			PoolSize: 10 * runtime.GOMAXPROCS(0),
-		})
-
-		_, err = redisClient.Ping(ctx).Result()
-		if err != nil {
-			logger.Error("Failed to connect to Redis", zap.Error(err))
-			serviceConfig.UseRedisCache = false
-		} else {
-			logger.Info("Successfully connected to Redis")
-		}
-	} else {
-		logger.Info("Redis cache is disabled")
-	}
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
@@ -113,7 +92,7 @@ func main() {
 		}),
 	)
 
-	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger, redisClient)
+	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
 
 	rest.NewImageController(app, serviceConfig, imageService, logger)
 

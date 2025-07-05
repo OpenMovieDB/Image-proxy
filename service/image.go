@@ -8,7 +8,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
@@ -29,13 +28,11 @@ type ImageService struct {
 
 	strategy *image.Strategy
 
-	redis *redis.Client
-
 	logger *zap.Logger
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger, redis *redis.Client) *ImageService {
-	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger, redis: redis}
+func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
+	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
 }
 
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
@@ -111,27 +108,11 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	key := path.Join("proxy", serviceType.String(), rawPath)
 	bucket := i.config.S3Bucket
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
-	redisKey := fmt.Sprintf("img:%s", key)
 
-	// 1. Пробуем получить из Redis если кеширование включено
-	if i.config.UseRedisCache && i.redis != nil {
-		logger.Debug("проверяем Redis кеш", zap.String("key", redisKey))
-		imageData, err := i.tryGetFromRedis(ctx, redisKey)
-		if err == nil {
-			logger.Info("изображение получено из Redis кеша", zap.String("key", redisKey))
-			return imageData, nil
-		}
-		logger.Debug("не найдено в Redis", zap.Error(err))
-	}
-
-	// 2. Пробуем получить из S3
+	// 1. Пробуем получить из S3
 	logger.Debug("проверяем S3 кеш", zap.String("key", key))
 	imageData, err := i.tryGetFromS3(ctx, bucket, key)
 	if err == nil {
-		// Если нашли в S3 и Redis включен, кешируем в Redis
-		if i.config.UseRedisCache && i.redis != nil {
-			i.cacheInRedis(ctx, redisKey, imageData)
-		}
 		logger.Info("изображение получено из S3", zap.String("key", key))
 		return imageData, nil
 	}
@@ -143,7 +124,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	logger.Debug("не найдено в S3", zap.String("key", key))
 
-	// 3. Получаем от внешнего сервиса
+	// 2. Получаем от внешнего сервиса
 	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
 	imageData, err = i.fetchFromExternalService(ctx, url)
 	if err != nil {
@@ -151,47 +132,11 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return nil, err
 	}
 
-	// 4. Кешируем результат
-	// В Redis (если включено)
-	if i.config.UseRedisCache && i.redis != nil {
-		i.cacheInRedis(ctx, redisKey, imageData)
-	}
-
-	// В S3 (асинхронно)
+	// 3. Кешируем результат в S3 (асинхронно)
 	go i.cacheInS3(bucket, key, imageData, url)
 
 	logger.Info("изображение получено от внешнего сервиса", zap.String("url", url))
 	return imageData, nil
-}
-
-// tryGetFromRedis пытается получить изображение из Redis кеша
-func (i *ImageService) tryGetFromRedis(ctx context.Context, key string) (*ProxyResponse, error) {
-	cachedData, err := i.redis.Get(ctx, key).Bytes()
-	if err != nil {
-		return nil, err
-	}
-
-	// Формат данных: [2 байта размера заголовка][заголовки][содержимое]
-	headerSize := int(cachedData[0])*256 + int(cachedData[1])
-
-	headers := http.Header{}
-	contentType := ""
-	if headerSize > 0 {
-		contentType = string(cachedData[2 : 2+headerSize])
-		headers.Set("Content-Type", contentType)
-		headers.Set("Content-Length", fmt.Sprint(len(cachedData)-2-headerSize))
-	}
-
-	imageBytes := cachedData[2+headerSize:]
-	bodyReader := io.NopCloser(bytes.NewReader(imageBytes))
-
-	return &ProxyResponse{
-		Body:        bodyReader,
-		Headers:     headers,
-		StatusCode:  http.StatusOK,
-		rawBytes:    imageBytes,
-		contentType: contentType,
-	}, nil
 }
 
 // tryGetFromS3 пытается получить изображение из S3
@@ -269,44 +214,6 @@ func (i *ImageService) fetchFromExternalService(ctx context.Context, url string)
 		rawBytes:    bodyBytes,
 		contentType: contentType,
 	}, nil
-}
-
-// cacheInRedis кеширует изображение в Redis
-func (i *ImageService) cacheInRedis(ctx context.Context, key string, resp *ProxyResponse) {
-	logger := log.LoggerWithTrace(ctx, i.logger)
-
-	// Если байты еще не извлечены, использовать пустой массив
-	var imageBytes []byte
-	var contentType string
-
-	if resp.rawBytes != nil {
-		imageBytes = resp.rawBytes
-	} else {
-		logger.Debug("пропускаем кеширование в Redis - нет доступных байтов")
-		return
-	}
-
-	if ct := resp.Headers.Get("Content-Type"); ct != "" {
-		contentType = ct
-	} else if resp.contentType != "" {
-		contentType = resp.contentType
-	}
-
-	headerSize := len(contentType)
-	cacheData := make([]byte, 2+headerSize+len(imageBytes))
-
-	// Формат: [2 байта размера заголовка][заголовок contentType][содержимое]
-	cacheData[0] = byte(headerSize / 256)
-	cacheData[1] = byte(headerSize % 256)
-	copy(cacheData[2:2+headerSize], []byte(contentType))
-	copy(cacheData[2+headerSize:], imageBytes)
-
-	err := i.redis.Set(ctx, key, cacheData, i.config.RedisCacheTTL).Err()
-	if err != nil {
-		logger.Error("ошибка сохранения в Redis", zap.Error(err), zap.String("key", key))
-	} else {
-		logger.Debug("успешно сохранено в Redis", zap.String("key", key))
-	}
 }
 
 // cacheInS3 асинхронно кеширует изображение в S3
