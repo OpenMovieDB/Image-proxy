@@ -6,6 +6,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
 	"net/http"
+	"os"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/service"
@@ -25,6 +26,10 @@ func NewImageController(app *fiber.App, cfg *config.Config, service *service.Ima
 
 	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)
 	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
+	
+	// Административные эндпоинты для управления битыми URL
+	app.Get("/admin/failed-urls", i.GetFailedURLs)
+	app.Delete("/admin/failed-urls", i.ClearFailedURLs)
 
 	return i
 }
@@ -115,4 +120,66 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "max-age=604800,immutable")
 
 	return c.Status(http.StatusOK).SendStream(resp.Body)
+}
+
+// GetFailedURLs возвращает файл с битыми URL
+//
+//	@Summary		Get failed URLs file
+//	@Description	Downloads the file containing all failed URLs
+//	@Tags			admin
+//	@Accept			json
+//	@Produce		text/plain
+//	@Success		200	{file}	file	"Returns the failed URLs file"
+//	@Failure		404	{object}	string	"File not found"
+//	@Failure		500	{object}	string	"Internal server error"
+//	@Router			/admin/failed-urls [get]
+func (i *ImageController) GetFailedURLs(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*5)
+	defer cancel()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	// Проверяем существование файла
+	if _, err := os.Stat("failed_urls.txt"); os.IsNotExist(err) {
+		logger.Warn("файл с битыми URL не найден")
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "failed URLs file not found",
+		})
+	}
+
+	// Устанавливаем заголовки для скачивания файла
+	c.Set("Content-Type", "text/plain")
+	c.Set("Content-Disposition", "attachment; filename=failed_urls.txt")
+
+	logger.Info("отправляем файл с битыми URL")
+	return c.SendFile("failed_urls.txt")
+}
+
+// ClearFailedURLs очищает файл с битыми URL
+//
+//	@Summary		Clear failed URLs file
+//	@Description	Clears the file containing failed URLs
+//	@Tags			admin
+//	@Accept			json
+//	@Produce		json
+//	@Success		200	{object}	map[string]string	"Success message"
+//	@Failure		500	{object}	string	"Internal server error"
+//	@Router			/admin/failed-urls [delete]
+func (i *ImageController) ClearFailedURLs(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*5)
+	defer cancel()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	// Очищаем файл
+	err := i.service.ClearFailedURLs()
+	if err != nil {
+		logger.Error("ошибка очистки файла с битыми URL", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to clear failed URLs file",
+		})
+	}
+
+	logger.Info("файл с битыми URL очищен")
+	return c.JSON(fiber.Map{
+		"message": "failed URLs file cleared successfully",
+	})
 }

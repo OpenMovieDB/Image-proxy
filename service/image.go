@@ -12,12 +12,15 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"path"
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter/image"
 	"resizer/shared/log"
 	"strings"
+	"sync"
+	"time"
 )
 
 var ErrNotFound = errors.New("object not found in S3")
@@ -30,10 +33,16 @@ type ImageService struct {
 	strategy *image.Strategy
 
 	logger *zap.Logger
+
+	// для записи неуспешных URL
+	failedURLsFile *os.File
+	failedURLsMutex sync.Mutex
 }
 
 func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
-	return &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
+	service := &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
+	service.initFailedURLsFile()
+	return service
 }
 
 func (i *ImageService) Process(ctx context.Context, params model.ImageRequest) (*model.ImageResponse, error) {
@@ -131,7 +140,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 	// 2. Получаем от внешнего сервиса
 	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
-	imageData, err = i.fetchFromExternalService(ctx, url)
+	imageData, err = i.fetchFromExternalService(ctx, url, serviceType, rawPath)
 	if err != nil {
 		logger.Error("ошибка при запросе к внешнему сервису", zap.Error(err))
 		return nil, err
@@ -191,7 +200,7 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 }
 
 // fetchFromExternalService получает изображение от внешнего сервиса
-func (i *ImageService) fetchFromExternalService(ctx context.Context, url string) (*ProxyResponse, error) {
+func (i *ImageService) fetchFromExternalService(ctx context.Context, url string, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
 	res, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -199,6 +208,9 @@ func (i *ImageService) fetchFromExternalService(ctx context.Context, url string)
 
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
+		// Записываем неуспешную ссылку в файл в формате /service-type/path
+		failedPath := fmt.Sprintf("/%s/%s", serviceType.String(), rawPath)
+		i.logFailedURL(failedPath, res.StatusCode)
 		return &ProxyResponse{StatusCode: res.StatusCode}, nil
 	}
 
@@ -356,4 +368,70 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// initFailedURLsFile инициализирует файл для записи неуспешных URL
+func (i *ImageService) initFailedURLsFile() {
+	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		i.logger.Error("не удалось создать файл для неуспешных URL", zap.Error(err))
+		return
+	}
+	i.failedURLsFile = file
+}
+
+// logFailedURL записывает неуспешную ссылку в файл
+func (i *ImageService) logFailedURL(url string, statusCode int) {
+	if i.failedURLsFile == nil {
+		return
+	}
+
+	i.failedURLsMutex.Lock()
+	defer i.failedURLsMutex.Unlock()
+
+	logLine := fmt.Sprintf("%s\n", url)
+	
+	_, err := i.failedURLsFile.WriteString(logLine)
+	if err != nil {
+		i.logger.Error("ошибка записи в файл неуспешных URL", zap.Error(err))
+	}
+
+	// Принудительно сбрасываем буфер
+	i.failedURLsFile.Sync()
+
+	i.logger.Info("записана неуспешная ссылка", zap.String("url", url), zap.Int("status", statusCode))
+}
+
+// Close закрывает файл неуспешных URL
+func (i *ImageService) Close() error {
+	if i.failedURLsFile != nil {
+		return i.failedURLsFile.Close()
+	}
+	return nil
+}
+
+// ClearFailedURLs очищает файл с битыми URL
+func (i *ImageService) ClearFailedURLs() error {
+	i.failedURLsMutex.Lock()
+	defer i.failedURLsMutex.Unlock()
+
+	// Закрываем текущий файл
+	if i.failedURLsFile != nil {
+		i.failedURLsFile.Close()
+	}
+
+	// Удаляем существующий файл
+	if err := os.Remove("failed_urls.txt"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	// Создаем новый пустой файл
+	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+
+	i.failedURLsFile = file
+	i.logger.Info("файл с битыми URL очищен")
+	return nil
 }
