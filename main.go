@@ -12,6 +12,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"
 	"github.com/gofiber/fiber/v2/middleware/etag"
+	"github.com/gofiber/fiber/v2/middleware/healthcheck"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
@@ -22,6 +23,7 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
+	"time"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -65,6 +67,7 @@ func main() {
 	}
 
 	converterStrategy := img.MustStrategy(logger)
+	s3Client := s3.New(awsSession)
 
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
@@ -80,6 +83,14 @@ func main() {
 			Max:        serviceConfig.RateLimitMaxRequests,
 			Expiration: serviceConfig.RateLimitDuration,
 		}),
+		healthcheck.New(healthcheck.Config{
+			LivenessProbe: func(c *fiber.Ctx) bool {
+				return true
+			},
+			ReadinessProbe: func(c *fiber.Ctx) bool {
+				return checkS3Health(s3Client, serviceConfig.S3Bucket)
+			},
+		}),
 		swagger.New(swagger.Config{
 			BasePath: "/",
 			FilePath: "./docs/swagger.json",
@@ -88,7 +99,7 @@ func main() {
 		}),
 	)
 
-	imageService := service.NewImageService(s3.New(awsSession), serviceConfig, converterStrategy, logger)
+	imageService := service.NewImageService(s3Client, serviceConfig, converterStrategy, logger)
 
 	rest.NewImageController(app, serviceConfig, imageService, logger)
 
@@ -96,4 +107,14 @@ func main() {
 		logger.Panic(err.Error())
 		return
 	}
+}
+
+func checkS3Health(s3Client *s3.S3, bucket string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := s3Client.HeadBucketWithContext(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	})
+	return err == nil
 }
