@@ -10,7 +10,7 @@ This is an image proxy service built in Go that processes and serves images from
 
 ### Core Components
 
-- **main.go**: Entry point that sets up Fiber web server, AWS S3 client, Redis cache, OpenTelemetry tracing, and dependency injection
+- **main.go**: Entry point that sets up Fiber web server, AWS S3 client, health checks, OpenTelemetry tracing, and dependency injection
 - **api/rest/image.go**: REST endpoints for image processing and proxying
 - **service/image.go**: Business logic for image processing and external service proxying
 - **converter/image/**: Image transformation engine using libvips (bimg library)
@@ -19,7 +19,7 @@ This is an image proxy service built in Go that processes and serves images from
 
 ### Key Dependencies
 
-- **Fiber v2**: Web framework for HTTP handling
+- **Fiber v2**: Web framework for HTTP handling with built-in healthcheck middleware
 - **bimg**: Image processing library (requires libvips)
 - **AWS SDK**: S3 storage integration
 - **OpenTelemetry**: Distributed tracing and observability
@@ -92,6 +92,16 @@ Optional configuration:
 - Proxies images from external services
 - Supported services: tmdb-images, kinopoisk-images, kinopoisk-ott-images, kinopoisk-st-images
 - Adds cache headers for browser caching
+
+### Health Check Endpoints
+`GET /livez`
+- Liveness probe for Kubernetes
+- Always returns 200 OK if service is running
+
+`GET /readyz`
+- Readiness probe for Kubernetes
+- Returns 200 OK if service is ready and S3 is accessible
+- Returns 503 Service Unavailable if S3 connection fails
 
 ## Key Implementation Details
 

@@ -3,7 +3,8 @@
     "allow": [
       "Bash(go mod:*)",
       "Bash(rm:*)",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "WebFetch(domain:docs.gofiber.io)"
     ],
     "deny": []
   }
