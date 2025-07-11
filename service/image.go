@@ -17,6 +17,7 @@ import (
 	"resizer/config"
 	"resizer/converter/image"
 	"resizer/shared/log"
+	"strings"
 )
 
 var ErrNotFound = errors.New("object not found in S3")
@@ -117,12 +118,16 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return imageData, nil
 	}
 
-	if !isNotFoundError(err) {
+	// Если нашли HTML в кеше - удаляем его и получаем свежие данные
+	if err != nil && strings.Contains(err.Error(), "object is HTML page") {
+		logger.Warn("обнаружен HTML в кеше, удаляем и перезагружаем", zap.String("key", key))
+		go i.deleteFromS3(bucket, key) // Удаляем асинхронно
+	} else if !isNotFoundError(err) {
 		logger.Error("ошибка при получении из S3", zap.Error(err))
 		return nil, err
 	}
 
-	logger.Debug("не найдено в S3", zap.String("key", key))
+	logger.Debug("не найдено в S3 или найден некорректный контент", zap.String("key", key))
 
 	// 2. Получаем от внешнего сервиса
 	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
@@ -132,8 +137,12 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return nil, err
 	}
 
-	// 3. Кешируем результат в S3 (асинхронно)
-	go i.cacheInS3(bucket, key, imageData, url)
+	// 3. Кешируем результат в S3 (асинхронно), если это валидное изображение
+	if i.isValidImageResponse(imageData) {
+		go i.cacheInS3(bucket, key, imageData, url)
+	} else {
+		logger.Warn("не кешируем невалидный ответ", zap.String("url", url), zap.String("content_type", imageData.contentType))
+	}
 
 	logger.Info("изображение получено от внешнего сервиса", zap.String("url", url))
 	return imageData, nil
@@ -150,10 +159,11 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 		return nil, err
 	}
 
-	// Проверяем, что это не HTML ошибка (некоторые S3 сервисы возвращают HTML страницы ошибок)
-	if getOut.ContentType != nil && *getOut.ContentType == "text/html" {
-		getOut.Body.Close()
-		return nil, errors.New("object is HTML page")
+	// Читаем все содержимое
+	bodyBytes, err := ioutil.ReadAll(getOut.Body)
+	getOut.Body.Close()
+	if err != nil {
+		return nil, err
 	}
 
 	headers := http.Header{}
@@ -166,11 +176,9 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 		headers.Set("Content-Length", fmt.Sprint(*getOut.ContentLength))
 	}
 
-	// Читаем все содержимое для кеширования в Redis
-	bodyBytes, err := ioutil.ReadAll(getOut.Body)
-	getOut.Body.Close()
-	if err != nil {
-		return nil, err
+	// Проверяем, что это не HTML ошибка
+	if i.isHTMLContent(contentType, bodyBytes) {
+		return nil, errors.New("object is HTML page")
 	}
 
 	return &ProxyResponse{
@@ -254,4 +262,98 @@ func isNotFoundError(err error) bool {
 		return true
 	}
 	return false
+}
+
+// deleteFromS3 удаляет объект из S3
+func (i *ImageService) deleteFromS3(bucket, key string) {
+	logger := i.logger
+	_, err := i.s3.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		logger.Error("ошибка удаления из S3", zap.Error(err), zap.String("key", key))
+	} else {
+		logger.Info("объект удален из S3", zap.String("key", key))
+	}
+}
+
+// isHTMLContent проверяет, является ли контент HTML
+func (i *ImageService) isHTMLContent(contentType string, bodyBytes []byte) bool {
+	// Проверяем Content-Type
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		return true
+	}
+
+	// Проверяем начало содержимого
+	if len(bodyBytes) > 0 {
+		content := strings.ToLower(string(bodyBytes[:min(len(bodyBytes), 512)]))
+		if strings.Contains(content, "<html") || strings.Contains(content, "<!doctype html") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// isValidImageResponse проверяет, является ли ответ валидным изображением
+func (i *ImageService) isValidImageResponse(resp *ProxyResponse) bool {
+	if resp == nil || resp.rawBytes == nil || len(resp.rawBytes) == 0 {
+		return false
+	}
+
+	// Проверяем, что это не HTML
+	if i.isHTMLContent(resp.contentType, resp.rawBytes) {
+		return false
+	}
+
+	// Проверяем Content-Type на валидные типы изображений
+	contentType := strings.ToLower(resp.contentType)
+	validTypes := []string{"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml", "image/avif"}
+	for _, validType := range validTypes {
+		if strings.Contains(contentType, validType) {
+			return true
+		}
+	}
+
+	// Если Content-Type не задан, проверяем по сигнатуре файла
+	if contentType == "" || contentType == "application/octet-stream" {
+		return i.isValidImageBySignature(resp.rawBytes)
+	}
+
+	return false
+}
+
+// isValidImageBySignature проверяет сигнатуру файла
+func (i *ImageService) isValidImageBySignature(data []byte) bool {
+	if len(data) < 8 {
+		return false
+	}
+
+	// JPEG
+	if data[0] == 0xFF && data[1] == 0xD8 {
+		return true
+	}
+	// PNG
+	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		return true
+	}
+	// GIF
+	if (data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46) {
+		return true
+	}
+	// WebP
+	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
+		return true
+	}
+
+	return false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
