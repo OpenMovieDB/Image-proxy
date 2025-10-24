@@ -4,7 +4,9 @@
       "Bash(go mod:*)",
       "Bash(rm:*)",
       "Bash(go build:*)",
-      "WebFetch(domain:docs.gofiber.io)"
+      "WebFetch(domain:docs.gofiber.io)",
+      "Bash(go vet:*)",
+      "Bash(go fmt:*)"
     ],
     "deny": []
   }

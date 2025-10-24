@@ -35,7 +35,7 @@ type ImageService struct {
 	logger *zap.Logger
 
 	// для записи неуспешных URL
-	failedURLsFile *os.File
+	failedURLsFile  *os.File
 	failedURLsMutex sync.Mutex
 }
 
@@ -132,11 +132,10 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		logger.Warn("обнаружен HTML в кеше, удаляем и перезагружаем", zap.String("key", key))
 		go i.deleteFromS3(bucket, key) // Удаляем асинхронно
 	} else if !isNotFoundError(err) {
-		logger.Error("ошибка при получении из S3", zap.Error(err))
-		return nil, err
+		logger.Warn("ошибка при получении из S3, используем fallback на внешний сервис", zap.Error(err))
 	}
 
-	logger.Debug("не найдено в S3 или найден некорректный контент", zap.String("key", key))
+	logger.Debug("не найдено в S3 или найден некорректный контент, используем внешний сервис", zap.String("key", key))
 
 	// 2. Получаем от внешнего сервиса
 	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
@@ -351,7 +350,7 @@ func (i *ImageService) isValidImageBySignature(data []byte) bool {
 		return true
 	}
 	// GIF
-	if (data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46) {
+	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
 		return true
 	}
 	// WebP
@@ -390,7 +389,7 @@ func (i *ImageService) logFailedURL(url string, statusCode int) {
 	defer i.failedURLsMutex.Unlock()
 
 	logLine := fmt.Sprintf("%s\n", url)
-	
+
 	_, err := i.failedURLsFile.WriteString(logLine)
 	if err != nil {
 		i.logger.Error("ошибка записи в файл неуспешных URL", zap.Error(err))
