@@ -6,7 +6,8 @@
       "Bash(go build:*)",
       "WebFetch(domain:docs.gofiber.io)",
       "Bash(go vet:*)",
-      "Bash(go fmt:*)"
+      "Bash(go fmt:*)",
+      "Bash(docker build:*)"
     ],
     "deny": []
   }
