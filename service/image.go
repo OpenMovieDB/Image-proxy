@@ -5,22 +5,24 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
+	"strings"
+	"sync"
+
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter/image"
+	"resizer/repository"
 	"resizer/shared/log"
-	"strings"
-	"sync"
-	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"go.uber.org/zap"
 )
 
 var ErrNotFound = errors.New("object not found in S3")
@@ -34,13 +36,15 @@ type ImageService struct {
 
 	logger *zap.Logger
 
+	repo repository.ImageRepository
+
 	// для записи неуспешных URL
 	failedURLsFile  *os.File
 	failedURLsMutex sync.Mutex
 }
 
-func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
-	service := &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
+func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger, repo repository.ImageRepository) *ImageService {
+	service := &ImageService{s3: s3, config: c, strategy: strategy, logger: logger, repo: repo}
 	service.initFailedURLsFile()
 	return service
 }

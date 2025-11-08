@@ -2,6 +2,17 @@ package main
 
 import (
 	"context"
+	"log/slog"
+	"time"
+
+	"resizer/api/rest"
+	"resizer/config"
+	img "resizer/converter/image"
+	"resizer/repository/mongo"
+	"resizer/service"
+	"resizer/shared/log"
+	"resizer/shared/trace"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -16,14 +27,8 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
-	"log/slog"
-	"resizer/api/rest"
-	"resizer/config"
-	img "resizer/converter/image"
-	"resizer/service"
-	"resizer/shared/log"
-	"resizer/shared/trace"
-	"time"
+	mongoDriver "go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -69,6 +74,30 @@ func main() {
 	converterStrategy := img.MustStrategy(logger)
 	s3Client := s3.New(awsSession)
 
+	mongoClient, err := mongoDriver.Connect(options.Client().ApplyURI(serviceConfig.MongoURI))
+	if err != nil {
+		logger.Error("Failed to connect to MongoDB")
+		panic("Failed to connect to MongoDB")
+	}
+	defer func() {
+		if err = mongoClient.Disconnect(ctx); err != nil {
+			slog.Error("Error disconnecting MongoDB: %v", err)
+		}
+	}()
+
+	if err = mongoClient.Ping(ctx, nil); err != nil {
+		logger.Error("Failed to ping MongoDB")
+		panic("Failed to ping MongoDB")
+	}
+
+	mongoDB := mongoClient.Database(serviceConfig.MongoDB)
+	imageRepo := mongo.NewImageRepository(mongoDB)
+
+	if err = imageRepo.EnsureIndexes(ctx); err != nil {
+		logger.Error("Failed to ensure MongoDB indexes")
+		panic("Failed to ensure MongoDB indexes")
+	}
+
 	app := fiber.New(fiber.Config{AppName: serviceConfig.AppName})
 	app.Use(
 		recover.New(),
@@ -99,7 +128,7 @@ func main() {
 		}),
 	)
 
-	imageService := service.NewImageService(s3Client, serviceConfig, converterStrategy, logger)
+	imageService := service.NewImageService(s3Client, serviceConfig, converterStrategy, logger, imageRepo)
 
 	rest.NewImageController(app, serviceConfig, imageService, logger)
 

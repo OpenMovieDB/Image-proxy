@@ -22,6 +22,11 @@ type Config struct {
 	S3Endpoint  string `env:"S3_ENDPOINT,required"`
 
 	TMDBImageProxy string `env:"TMDB_IMAGE_PROXY"`
+
+	MongoURI string `env:"MONGO_URI" envDefault:"mongodb://localhost:27017"`
+	MongoDB  string `env:"MONGO_DB" envDefault:"images"`
+
+	APIToken string `env:"API_TOKEN,required"`
 }
 
 func New() *Config {

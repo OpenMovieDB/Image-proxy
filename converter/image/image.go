@@ -40,3 +40,7 @@ func (ci *CustomImage) Transform(funcs ...Transform) {
 func (ci *CustomImage) Encode(ctx context.Context, quality float32) (io.Reader, int64, error) {
 	return ci.t.Encode(ctx, ci.img, quality)
 }
+
+func (ci *CustomImage) Size() (bimg.ImageSize, error) {
+	return ci.img.Size()
+}

@@ -3,16 +3,20 @@ package rest
 import (
 	"context"
 	"fmt"
-	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 	"net/http"
 	"os"
-	"resizer/api/model"
-	"resizer/config"
-	"resizer/service"
-	"resizer/shared/log"
 	"strconv"
 	"time"
+
+	"resizer/api/model"
+	"resizer/config"
+	domainModel "resizer/domain/model"
+	"resizer/service"
+	"resizer/shared/log"
+
+	"github.com/gofiber/fiber/v2"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.uber.org/zap"
 )
 
 type ImageController struct {
@@ -26,7 +30,12 @@ func NewImageController(app *fiber.App, cfg *config.Config, service *service.Ima
 
 	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)
 	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
-	
+
+	// Новые эндпоинты для уникальных изображений
+	app.Post("/api/images", i.CreateImage)
+	app.Get("/poster/:id/:variant<regex(original|preview)>", i.GetPoster)
+	app.Get("/background/:id/:variant<regex(original|preview)>", i.GetBackground)
+
 	// Административные эндпоинты для управления битыми URL
 	app.Get("/admin/failed-urls", i.GetFailedURLs)
 	app.Delete("/admin/failed-urls", i.ClearFailedURLs)
@@ -100,6 +109,16 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 	}
 	rawPath := c.Params("*")
 
+	// Проверяем наличие в новой системе
+	img, err := i.service.GetImageBySource(ctx, serviceType.String(), rawPath)
+	if err == nil && img != nil {
+		// Редирект на новый формат
+		redirectURL := fmt.Sprintf("/%s/%s/original", img.Type, img.ID.Hex())
+		logger.Info("redirecting to new format", zap.String("url", redirectURL))
+		return c.Redirect(redirectURL, fiber.StatusMovedPermanently)
+	}
+
+	// Fallback на старую логику
 	resp, err := i.service.ProxyImage(ctx, serviceType, rawPath)
 	if err != nil {
 		logger.Error("proxy service error", zap.Error(err))
@@ -182,4 +201,143 @@ func (i *ImageController) ClearFailedURLs(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"message": "failed URLs file cleared successfully",
 	})
+}
+
+// CreateImage создает новое изображение из источника
+//
+//	@Summary		Create image from source
+//	@Description	Creates a new image from an external source
+//	@Tags			images
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		object	true	"Image creation request"
+//	@Success		200		{object}	map[string]string
+//	@Failure		400		{object}	string
+//	@Failure		500		{object}	string
+//	@Router			/api/images [post]
+func (i *ImageController) CreateImage(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Minute*2)
+	defer cancel()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	token := c.Get("Authorization")
+	if token == "" || len(token) < 8 || token[:7] != "Bearer " {
+		logger.Warn("unauthorized API request - invalid token format", zap.String("ip", c.IP()))
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	token = token[7:]
+	if token != i.cfg.APIToken {
+		logger.Warn("unauthorized API request - invalid token", zap.String("ip", c.IP()))
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "unauthorized",
+		})
+	}
+
+	var req struct {
+		Type      string `json:"type"`
+		Service   string `json:"service"`
+		Path      string `json:"path"`
+		SourceURL string `json:"sourceUrl"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		logger.Error("failed to parse request", zap.Error(err))
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	var imageType domainModel.ImageType
+	if req.Type == "poster" {
+		imageType = domainModel.ImageTypePoster
+	} else if req.Type == "background" {
+		imageType = domainModel.ImageTypeBackground
+	} else {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid image type, must be 'poster' or 'background'",
+		})
+	}
+
+	img, err := i.service.CreateImageFromSource(ctx, imageType, req.Service, req.Path, req.SourceURL)
+	if err != nil {
+		logger.Error("failed to create image", zap.Error(err))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to create image",
+		})
+	}
+
+	logger.Info("image created successfully", zap.String("id", img.ID.Hex()))
+	return c.JSON(fiber.Map{
+		"id":      img.ID.Hex(),
+		"message": "image created successfully",
+	})
+}
+
+// GetPoster возвращает изображение постера
+//
+//	@Summary		Get poster image
+//	@Description	Returns a poster image by ID and variant
+//	@Tags			images
+//	@Produce		image/jpeg
+//	@Param			id		path	string	true	"Image ID"
+//	@Param			variant	path	string	true	"Variant (original or preview)"
+//	@Success		200		{file}	file
+//	@Failure		400		{object}	string
+//	@Failure		404		{object}	string
+//	@Router			/poster/{id}/{variant} [get]
+func (i *ImageController) GetPoster(c *fiber.Ctx) error {
+	return i.getImage(c, domainModel.ImageTypePoster)
+}
+
+// GetBackground возвращает изображение фона
+//
+//	@Summary		Get background image
+//	@Description	Returns a background image by ID and variant
+//	@Tags			images
+//	@Produce		image/jpeg
+//	@Param			id		path	string	true	"Image ID"
+//	@Param			variant	path	string	true	"Variant (original or preview)"
+//	@Success		200		{file}	file
+//	@Failure		400		{object}	string
+//	@Failure		404		{object}	string
+//	@Router			/background/{id}/{variant} [get]
+func (i *ImageController) GetBackground(c *fiber.Ctx) error {
+	return i.getImage(c, domainModel.ImageTypeBackground)
+}
+
+func (i *ImageController) getImage(c *fiber.Ctx, expectedType domainModel.ImageType) error {
+	ctx, cancel := context.WithTimeout(c.UserContext(), time.Second*10)
+	defer cancel()
+	logger := log.LoggerWithTrace(ctx, i.logger)
+
+	idStr := c.Params("id")
+	variantStr := c.Params("variant")
+
+	id, err := bson.ObjectIDFromHex(idStr)
+	if err != nil {
+		logger.Error("invalid image ID", zap.Error(err))
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid image ID",
+		})
+	}
+
+	variant := domainModel.ImageVariant(variantStr)
+
+	resp, err := i.service.GetImageByID(ctx, id, variant)
+	if err != nil {
+		logger.Error("failed to get image", zap.Error(err))
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "image not found",
+		})
+	}
+
+	c.Set("Content-Type", resp.Type)
+	c.Set("Content-Length", fmt.Sprintf("%d", resp.ContentLength))
+	c.Set("Content-Disposition", resp.ContentDisposition)
+	c.Set("Cache-Control", "max-age=31536000,immutable")
+
+	return c.Status(http.StatusOK).SendStream(resp.Body)
 }
