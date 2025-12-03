@@ -5,22 +5,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"go.uber.org/zap"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
+	"strings"
+	"sync"
+
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/converter/image"
 	"resizer/shared/log"
-	"strings"
-	"sync"
-	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"go.uber.org/zap"
 )
 
 var ErrNotFound = errors.New("object not found in S3")
@@ -122,7 +123,7 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	// 1. Пробуем получить из S3
 	logger.Debug("проверяем S3 кеш", zap.String("key", key))
 	imageData, err := i.tryGetFromS3(ctx, bucket, key)
-	if err == nil {
+	if err == nil && imageData != nil {
 		logger.Info("изображение получено из S3", zap.String("key", key))
 		return imageData, nil
 	}
@@ -143,6 +144,12 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	if err != nil {
 		logger.Error("ошибка при запросе к внешнему сервису", zap.Error(err))
 		return nil, err
+	}
+
+	// Дополнительная проверка на nil (защита от багов)
+	if imageData == nil {
+		logger.Error("fetchFromExternalService вернул nil response без ошибки")
+		return nil, errors.New("internal error: nil response from external service")
 	}
 
 	// 3. Кешируем результат в S3 (асинхронно), если это валидное изображение
@@ -167,11 +174,21 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 		return nil, err
 	}
 
+	// Проверка на nil Body
+	if getOut.Body == nil {
+		return nil, errors.New("S3 returned nil body")
+	}
+
 	// Читаем все содержимое
 	bodyBytes, err := ioutil.ReadAll(getOut.Body)
 	getOut.Body.Close()
 	if err != nil {
 		return nil, err
+	}
+
+	// Проверяем, что получили данные
+	if len(bodyBytes) == 0 {
+		return nil, errors.New("S3 returned empty body")
 	}
 
 	headers := http.Header{}
@@ -210,13 +227,19 @@ func (i *ImageService) fetchFromExternalService(ctx context.Context, url string,
 		// Записываем неуспешную ссылку в файл в формате /service-type/path
 		failedPath := fmt.Sprintf("/%s/%s", serviceType.String(), rawPath)
 		i.logFailedURL(failedPath, res.StatusCode)
-		return &ProxyResponse{StatusCode: res.StatusCode}, nil
+		// Возвращаем error вместо пустого response, чтобы избежать nil pointers
+		return nil, fmt.Errorf("external service returned status %d for %s", res.StatusCode, url)
 	}
 
 	bodyBytes, err := ioutil.ReadAll(res.Body)
 	res.Body.Close()
 	if err != nil {
 		return nil, err
+	}
+
+	// Проверяем, что получили данные
+	if len(bodyBytes) == 0 {
+		return nil, fmt.Errorf("external service returned empty body for %s", url)
 	}
 
 	headers := make(http.Header)
