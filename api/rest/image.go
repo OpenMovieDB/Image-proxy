@@ -125,18 +125,36 @@ func (i *ImageController) Proxy(c *fiber.Ctx) error {
 		return err
 	}
 
+	// Защита от nil response
+	if resp == nil {
+		logger.Error("proxy service returned nil response")
+		return c.Status(fiber.StatusInternalServerError).SendString("internal server error: nil response")
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return c.SendStatus(resp.StatusCode)
 	}
 
-	for k, vals := range resp.Headers {
-		if k == fiber.HeaderServer {
-			continue
+	// Защита от nil Headers
+	if resp.Headers != nil {
+		for k, vals := range resp.Headers {
+			if k == fiber.HeaderServer {
+				continue
+			}
+			// Защита от пустого слайса
+			if len(vals) > 0 {
+				c.Set(k, vals[0])
+			}
 		}
-		c.Set(k, vals[0])
 	}
 
 	c.Set("Cache-Control", "max-age=604800,immutable")
+
+	// Защита от nil Body
+	if resp.Body == nil {
+		logger.Error("proxy service returned nil body")
+		return c.Status(fiber.StatusInternalServerError).SendString("internal server error: nil body")
+	}
 
 	return c.Status(http.StatusOK).SendStream(resp.Body)
 }
