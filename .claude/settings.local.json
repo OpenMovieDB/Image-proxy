@@ -8,7 +8,18 @@
       "Bash(go vet:*)",
       "Bash(go fmt:*)",
       "Bash(docker build:*)",
-      "Bash(go get:*)"
+      "Bash(go get:*)",
+      "Bash(go version:*)",
+      "Bash(brew install:*)",
+      "Bash(vips:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(kubectl get:*)",
+      "Bash(kubectl logs:*)",
+      "Bash(kubectl describe:*)",
+      "Bash(kubectl top:*)"
     ],
     "deny": []
   }

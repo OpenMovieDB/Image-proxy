@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"resizer/api/model"
 	"resizer/config"
@@ -38,10 +39,19 @@ type ImageService struct {
 	// для записи неуспешных URL
 	failedURLsFile  *os.File
 	failedURLsMutex sync.Mutex
+
+	// semaphore для ограничения количества одновременных операций кеширования
+	cacheSemaphore chan struct{}
 }
 
 func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
-	service := &ImageService{s3: s3, config: c, strategy: strategy, logger: logger}
+	service := &ImageService{
+		s3:             s3,
+		config:         c,
+		strategy:       strategy,
+		logger:         logger,
+		cacheSemaphore: make(chan struct{}, 50), // Ограничиваем до 50 одновременных операций кеширования
+	}
 	service.initFailedURLsFile()
 	return service
 }
@@ -165,7 +175,11 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 
 // tryGetFromS3 пытается получить изображение из S3
 func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*ProxyResponse, error) {
-	getOut, err := i.s3.GetObject(&s3.GetObjectInput{
+	// Создаем context с таймаутом для S3
+	s3Ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	getOut, err := i.s3.GetObjectWithContext(s3Ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -217,7 +231,17 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 
 // fetchFromExternalService получает изображение от внешнего сервиса
 func (i *ImageService) fetchFromExternalService(ctx context.Context, url string, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
-	res, err := http.Get(url)
+	// Создаем HTTP клиент с таймаутом для предотвращения зависания
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -260,6 +284,17 @@ func (i *ImageService) fetchFromExternalService(ctx context.Context, url string,
 
 // cacheInS3 асинхронно кеширует изображение в S3
 func (i *ImageService) cacheInS3(bucket, key string, resp *ProxyResponse, url string) {
+	// Используем semaphore для ограничения количества одновременных операций
+	select {
+	case i.cacheSemaphore <- struct{}{}:
+		// Получили слот, продолжаем
+		defer func() { <-i.cacheSemaphore }() // Освобождаем слот после завершения
+	default:
+		// Нет свободных слотов, пропускаем кеширование
+		i.logger.Warn("пропускаем кеширование - достигнут лимит одновременных операций", zap.String("key", key))
+		return
+	}
+
 	logger := i.logger
 
 	if resp.rawBytes == nil || len(resp.rawBytes) == 0 {
@@ -274,8 +309,12 @@ func (i *ImageService) cacheInS3(bucket, key string, resp *ProxyResponse, url st
 
 	logger.Debug("начинаем кеширование в S3", zap.String("key", key))
 
+	// Создаем context с таймаутом для предотвращения зависания
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	uploader := s3manager.NewUploaderWithClient(i.s3)
-	_, err := uploader.Upload(&s3manager.UploadInput{
+	_, err := uploader.UploadWithContext(ctx, &s3manager.UploadInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(resp.rawBytes),
@@ -283,7 +322,11 @@ func (i *ImageService) cacheInS3(bucket, key string, resp *ProxyResponse, url st
 	})
 
 	if err != nil {
-		logger.Error("ошибка кеширования в S3", zap.Error(err), zap.String("key", key))
+		if ctx.Err() == context.DeadlineExceeded {
+			logger.Warn("таймаут кеширования в S3", zap.String("key", key))
+		} else {
+			logger.Error("ошибка кеширования в S3", zap.Error(err), zap.String("key", key))
+		}
 	} else {
 		logger.Debug("успешно сохранено в S3", zap.String("key", key))
 	}
