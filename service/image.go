@@ -42,6 +42,12 @@ type ImageService struct {
 
 	// semaphore для ограничения количества одновременных операций кеширования
 	cacheSemaphore chan struct{}
+
+	// circuit breaker для S3
+	s3Available      bool
+	s3AvailableMutex sync.RWMutex
+	s3FailureCount   int
+	s3LastCheck      time.Time
 }
 
 func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
@@ -51,8 +57,14 @@ func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logg
 		strategy:       strategy,
 		logger:         logger,
 		cacheSemaphore: make(chan struct{}, 50), // Ограничиваем до 50 одновременных операций кеширования
+		s3Available:    true,                    // Изначально считаем S3 доступным
+		s3LastCheck:    time.Now(),
 	}
 	service.initFailedURLsFile()
+
+	// Запускаем горутину для мониторинга состояния S3
+	go service.monitorS3Health()
+
 	return service
 }
 
@@ -130,20 +142,32 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	bucket := i.config.S3Bucket
 	url := serviceType.ToProxyURL(i.config.TMDBImageProxy) + rawPath
 
-	// 1. Пробуем получить из S3
-	logger.Debug("проверяем S3 кеш", zap.String("key", key))
-	imageData, err := i.tryGetFromS3(ctx, bucket, key)
-	if err == nil && imageData != nil {
-		logger.Info("изображение получено из S3", zap.String("key", key))
-		return imageData, nil
-	}
+	// 1. Проверяем доступность S3 перед попыткой чтения
+	s3Available := i.isS3Available()
 
-	// Если нашли HTML в кеше - удаляем его и получаем свежие данные
-	if err != nil && strings.Contains(err.Error(), "object is HTML page") {
-		logger.Warn("обнаружен HTML в кеше, удаляем и перезагружаем", zap.String("key", key))
-		go i.deleteFromS3(bucket, key) // Удаляем асинхронно
-	} else if !isNotFoundError(err) {
-		logger.Warn("ошибка при получении из S3, используем fallback на внешний сервис", zap.Error(err))
+	var imageData *ProxyResponse
+	var err error
+
+	if s3Available {
+		// Пробуем получить из S3 только если он доступен
+		logger.Debug("проверяем S3 кеш", zap.String("key", key))
+		imageData, err = i.tryGetFromS3(ctx, bucket, key)
+		if err == nil && imageData != nil {
+			logger.Info("изображение получено из S3", zap.String("key", key))
+			return imageData, nil
+		}
+
+		// Если нашли HTML в кеше - удаляем его и получаем свежие данные
+		if err != nil && strings.Contains(err.Error(), "object is HTML page") {
+			logger.Warn("обнаружен HTML в кеше, удаляем и перезагружаем", zap.String("key", key))
+			go i.deleteFromS3(bucket, key) // Удаляем асинхронно
+		} else if !isNotFoundError(err) {
+			logger.Warn("ошибка при получении из S3, используем fallback на внешний сервис", zap.Error(err))
+			// Записываем ошибку для быстрого открытия circuit breaker
+			i.recordS3Failure()
+		}
+	} else {
+		logger.Debug("S3 недоступен, пропускаем попытку чтения из кеша", zap.String("key", key))
 	}
 
 	logger.Debug("не найдено в S3 или найден некорректный контент, используем внешний сервис", zap.String("key", key))
@@ -162,9 +186,11 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		return nil, errors.New("internal error: nil response from external service")
 	}
 
-	// 3. Кешируем результат в S3 (асинхронно), если это валидное изображение
-	if i.isValidImageResponse(imageData) {
+	// 3. Кешируем результат в S3 (асинхронно), если это валидное изображение и S3 доступен
+	if i.isValidImageResponse(imageData) && i.isS3Available() {
 		go i.cacheInS3(bucket, key, imageData, url)
+	} else if !i.isS3Available() {
+		logger.Debug("пропускаем кеширование - S3 недоступен", zap.String("key", key))
 	} else {
 		logger.Warn("не кешируем невалидный ответ", zap.String("url", url), zap.String("content_type", imageData.contentType))
 	}
@@ -465,6 +491,72 @@ func (i *ImageService) logFailedURL(url string, statusCode int) {
 	i.failedURLsFile.Sync()
 
 	i.logger.Info("записана неуспешная ссылка", zap.String("url", url), zap.Int("status", statusCode))
+}
+
+// monitorS3Health периодически проверяет состояние S3
+func (i *ImageService) monitorS3Health() {
+	ticker := time.NewTicker(10 * time.Second) // Проверка каждые 10 секунд
+	defer ticker.Stop()
+
+	for range ticker.C {
+		i.checkS3Health()
+	}
+}
+
+// checkS3Health проверяет доступность S3
+func (i *ImageService) checkS3Health() {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Пробуем сделать простой HEAD запрос к бакету
+	_, err := i.s3.HeadBucketWithContext(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(i.config.S3Bucket),
+	})
+
+	i.s3AvailableMutex.Lock()
+	defer i.s3AvailableMutex.Unlock()
+
+	if err != nil {
+		i.s3FailureCount++
+		// Если 3 проверки подряд не удались - считаем S3 недоступным
+		if i.s3FailureCount >= 3 {
+			if i.s3Available {
+				i.logger.Warn("S3 недоступен, переключаемся на прямые запросы к источникам",
+					zap.Int("failures", i.s3FailureCount),
+					zap.Error(err))
+			}
+			i.s3Available = false
+		}
+	} else {
+		// S3 доступен
+		if !i.s3Available {
+			i.logger.Info("S3 снова доступен, возобновляем кеширование")
+		}
+		i.s3Available = true
+		i.s3FailureCount = 0
+	}
+	i.s3LastCheck = time.Now()
+}
+
+// isS3Available проверяет доступность S3 (быстрая read-only операция)
+func (i *ImageService) isS3Available() bool {
+	i.s3AvailableMutex.RLock()
+	defer i.s3AvailableMutex.RUnlock()
+	return i.s3Available
+}
+
+// recordS3Failure записывает ошибку S3 для быстрого открытия circuit breaker
+func (i *ImageService) recordS3Failure() {
+	i.s3AvailableMutex.Lock()
+	defer i.s3AvailableMutex.Unlock()
+
+	i.s3FailureCount++
+	// Если получаем много ошибок подряд - сразу открываем circuit
+	if i.s3FailureCount >= 5 && i.s3Available {
+		i.logger.Warn("слишком много ошибок S3, временно отключаем",
+			zap.Int("failures", i.s3FailureCount))
+		i.s3Available = false
+	}
 }
 
 // Close закрывает файл неуспешных URL
