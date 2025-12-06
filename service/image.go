@@ -1,12 +1,10 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -36,6 +34,9 @@ type ImageService struct {
 
 	logger *zap.Logger
 
+	// HTTP клиент для внешних запросов (переиспользуется)
+	httpClient *http.Client
+
 	// для записи неуспешных URL
 	failedURLsFile  *os.File
 	failedURLsMutex sync.Mutex
@@ -52,10 +53,18 @@ type ImageService struct {
 
 func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logger *zap.Logger) *ImageService {
 	service := &ImageService{
-		s3:             s3,
-		config:         c,
-		strategy:       strategy,
-		logger:         logger,
+		s3:       s3,
+		config:   c,
+		strategy: strategy,
+		logger:   logger,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
 		cacheSemaphore: make(chan struct{}, 50), // Ограничиваем до 50 одновременных операций кеширования
 		s3Available:    true,                    // Изначально считаем S3 доступным
 		s3LastCheck:    time.Now(),
@@ -131,7 +140,6 @@ type ProxyResponse struct {
 	Body        io.ReadCloser
 	Headers     http.Header
 	StatusCode  int
-	rawBytes    []byte
 	contentType string
 }
 
@@ -145,13 +153,10 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 	// 1. Проверяем доступность S3 перед попыткой чтения
 	s3Available := i.isS3Available()
 
-	var imageData *ProxyResponse
-	var err error
-
 	if s3Available {
 		// Пробуем получить из S3 только если он доступен
 		logger.Debug("проверяем S3 кеш", zap.String("key", key))
-		imageData, err = i.tryGetFromS3(ctx, bucket, key)
+		imageData, err := i.tryGetFromS3(ctx, bucket, key)
 		if err == nil && imageData != nil {
 			logger.Info("изображение получено из S3", zap.String("key", key))
 			return imageData, nil
@@ -160,75 +165,37 @@ func (i *ImageService) ProxyImage(ctx context.Context, serviceType model.Service
 		// Если нашли HTML в кеше - удаляем его и получаем свежие данные
 		if err != nil && strings.Contains(err.Error(), "object is HTML page") {
 			logger.Warn("обнаружен HTML в кеше, удаляем и перезагружаем", zap.String("key", key))
-			go i.deleteFromS3(bucket, key) // Удаляем асинхронно
+			go i.deleteFromS3(bucket, key)
 		} else if !isNotFoundError(err) {
 			logger.Warn("ошибка при получении из S3, используем fallback на внешний сервис", zap.Error(err))
-			// Записываем ошибку для быстрого открытия circuit breaker
 			i.recordS3Failure()
 		}
 	} else {
 		logger.Debug("S3 недоступен, пропускаем попытку чтения из кеша", zap.String("key", key))
 	}
 
-	logger.Debug("не найдено в S3 или найден некорректный контент, используем внешний сервис", zap.String("key", key))
+	logger.Debug("не найдено в S3, запрашиваем у внешнего сервиса", zap.String("url", url))
 
-	// 2. Получаем от внешнего сервиса
-	logger.Debug("запрашиваем у внешнего сервиса", zap.String("url", url))
-	imageData, err = i.fetchFromExternalService(ctx, url, serviceType, rawPath)
-	if err != nil {
-		logger.Error("ошибка при запросе к внешнему сервису", zap.Error(err))
-		return nil, err
-	}
-
-	// Дополнительная проверка на nil (защита от багов)
-	if imageData == nil {
-		logger.Error("fetchFromExternalService вернул nil response без ошибки")
-		return nil, errors.New("internal error: nil response from external service")
-	}
-
-	// 3. Кешируем результат в S3 (асинхронно), если это валидное изображение и S3 доступен
-	if i.isValidImageResponse(imageData) && i.isS3Available() {
-		go i.cacheInS3(bucket, key, imageData, url)
-	} else if !i.isS3Available() {
-		logger.Debug("пропускаем кеширование - S3 недоступен", zap.String("key", key))
-	} else {
-		logger.Warn("не кешируем невалидный ответ", zap.String("url", url), zap.String("content_type", imageData.contentType))
-	}
-
-	logger.Info("изображение получено от внешнего сервиса", zap.String("url", url))
-	return imageData, nil
+	// 2. Получаем от внешнего сервиса со стримингом
+	return i.fetchAndStream(ctx, url, serviceType, rawPath, bucket, key)
 }
 
-// tryGetFromS3 пытается получить изображение из S3
+// tryGetFromS3 пытается получить изображение из S3 (стримит напрямую)
 func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*ProxyResponse, error) {
-	// Создаем context с таймаутом для S3
 	s3Ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 
 	getOut, err := i.s3.GetObjectWithContext(s3Ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
-	// Проверка на nil Body
 	if getOut.Body == nil {
+		cancel()
 		return nil, errors.New("S3 returned nil body")
-	}
-
-	// Читаем все содержимое
-	bodyBytes, err := ioutil.ReadAll(getOut.Body)
-	getOut.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-
-	// Проверяем, что получили данные
-	if len(bodyBytes) == 0 {
-		return nil, errors.New("S3 returned empty body")
 	}
 
 	headers := http.Header{}
@@ -241,123 +208,165 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 		headers.Set("Content-Length", fmt.Sprint(*getOut.ContentLength))
 	}
 
-	// Проверяем, что это не HTML ошибка
-	if i.isHTMLContent(contentType, bodyBytes) {
+	// Проверяем Content-Type на HTML (без чтения body)
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		getOut.Body.Close()
+		cancel()
 		return nil, errors.New("object is HTML page")
 	}
 
+	// Оборачиваем body чтобы cancel вызвался при закрытии
+	wrappedBody := &cancelOnCloseReader{
+		ReadCloser: getOut.Body,
+		cancel:     cancel,
+	}
+
 	return &ProxyResponse{
-		Body:        io.NopCloser(bytes.NewReader(bodyBytes)),
+		Body:        wrappedBody,
 		Headers:     headers,
 		StatusCode:  http.StatusOK,
-		rawBytes:    bodyBytes,
 		contentType: contentType,
 	}, nil
 }
 
-// fetchFromExternalService получает изображение от внешнего сервиса
-func (i *ImageService) fetchFromExternalService(ctx context.Context, url string, serviceType model.ServiceName, rawPath string) (*ProxyResponse, error) {
-	// Создаем HTTP клиент с таймаутом для предотвращения зависания
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+// cancelOnCloseReader вызывает cancel при закрытии reader
+type cancelOnCloseReader struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnCloseReader) Close() error {
+	err := r.ReadCloser.Close()
+	r.cancel()
+	return err
+}
+
+// fetchAndStream получает изображение от внешнего сервиса и стримит клиенту,
+// параллельно записывая в S3 если он доступен
+func (i *ImageService) fetchAndStream(ctx context.Context, url string, serviceType model.ServiceName, rawPath, bucket, key string) (*ProxyResponse, error) {
+	logger := log.LoggerWithTrace(ctx, i.logger)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := client.Do(req)
+	res, err := i.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 
 	if res.StatusCode != http.StatusOK {
 		res.Body.Close()
-		// Записываем неуспешную ссылку в файл в формате /service-type/path
 		failedPath := fmt.Sprintf("/%s/%s", serviceType.String(), rawPath)
 		i.logFailedURL(failedPath, res.StatusCode)
-		// Возвращаем error вместо пустого response, чтобы избежать nil pointers
 		return nil, fmt.Errorf("external service returned status %d for %s", res.StatusCode, url)
 	}
 
-	bodyBytes, err := ioutil.ReadAll(res.Body)
-	res.Body.Close()
-	if err != nil {
-		return nil, err
-	}
+	contentType := res.Header.Get("Content-Type")
 
-	// Проверяем, что получили данные
-	if len(bodyBytes) == 0 {
-		return nil, fmt.Errorf("external service returned empty body for %s", url)
+	// Проверяем что это не HTML
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		res.Body.Close()
+		return nil, fmt.Errorf("external service returned HTML for %s", url)
 	}
 
 	headers := make(http.Header)
-	contentType := res.Header.Get("Content-Type")
 	if contentType != "" {
 		headers.Set("Content-Type", contentType)
 	}
-	headers.Set("Content-Length", fmt.Sprint(len(bodyBytes)))
+	if res.ContentLength > 0 {
+		headers.Set("Content-Length", fmt.Sprint(res.ContentLength))
+	}
 
+	// Если S3 доступен и это валидный image content-type - используем TeeReader для кеширования
+	if i.isS3Available() && i.isValidImageContentType(contentType) {
+		pr, pw := io.Pipe()
+
+		// Горутина для записи в S3
+		go func() {
+			defer pw.Close()
+
+			// Проверяем semaphore
+			select {
+			case i.cacheSemaphore <- struct{}{}:
+				defer func() { <-i.cacheSemaphore }()
+			default:
+				logger.Warn("пропускаем кеширование - достигнут лимит", zap.String("key", key))
+				// Читаем и отбрасываем данные из pipe чтобы не заблокировать writer
+				io.Copy(io.Discard, pr)
+				return
+			}
+
+			uploadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			uploader := s3manager.NewUploaderWithClient(i.s3)
+			_, err := uploader.UploadWithContext(uploadCtx, &s3manager.UploadInput{
+				Bucket:      aws.String(bucket),
+				Key:         aws.String(key),
+				Body:        pr,
+				ContentType: aws.String(contentType),
+			})
+
+			if err != nil {
+				logger.Error("ошибка кеширования в S3", zap.Error(err), zap.String("key", key))
+			} else {
+				logger.Debug("успешно сохранено в S3", zap.String("key", key))
+			}
+		}()
+
+		// TeeReader: читаем из res.Body, пишем в pw (который читает горутина S3)
+		teeReader := io.TeeReader(res.Body, pw)
+
+		// Оборачиваем в ReadCloser который закроет оригинальный body
+		body := &teeReadCloser{
+			Reader: teeReader,
+			closer: res.Body,
+			pipe:   pw,
+		}
+
+		logger.Info("стримим изображение с параллельным кешированием", zap.String("url", url))
+		return &ProxyResponse{
+			Body:        body,
+			Headers:     headers,
+			StatusCode:  http.StatusOK,
+			contentType: contentType,
+		}, nil
+	}
+
+	// S3 недоступен или невалидный content-type - просто стримим
+	logger.Info("стримим изображение без кеширования", zap.String("url", url))
 	return &ProxyResponse{
-		Body:        io.NopCloser(bytes.NewReader(bodyBytes)),
+		Body:        res.Body,
 		Headers:     headers,
 		StatusCode:  http.StatusOK,
-		rawBytes:    bodyBytes,
 		contentType: contentType,
 	}, nil
 }
 
-// cacheInS3 асинхронно кеширует изображение в S3
-func (i *ImageService) cacheInS3(bucket, key string, resp *ProxyResponse, url string) {
-	// Используем semaphore для ограничения количества одновременных операций
-	select {
-	case i.cacheSemaphore <- struct{}{}:
-		// Получили слот, продолжаем
-		defer func() { <-i.cacheSemaphore }() // Освобождаем слот после завершения
-	default:
-		// Нет свободных слотов, пропускаем кеширование
-		i.logger.Warn("пропускаем кеширование - достигнут лимит одновременных операций", zap.String("key", key))
-		return
-	}
+// teeReadCloser оборачивает TeeReader и закрывает underlying body и pipe
+type teeReadCloser struct {
+	io.Reader
+	closer io.Closer
+	pipe   *io.PipeWriter
+}
 
-	logger := i.logger
+func (t *teeReadCloser) Close() error {
+	t.pipe.Close()
+	return t.closer.Close()
+}
 
-	if resp.rawBytes == nil || len(resp.rawBytes) == 0 {
-		logger.Error("пропускаем кеширование в S3 - нет доступных байтов")
-		return
-	}
-
-	contentType := resp.Headers.Get("Content-Type")
-	if contentType == "" && resp.contentType != "" {
-		contentType = resp.contentType
-	}
-
-	logger.Debug("начинаем кеширование в S3", zap.String("key", key))
-
-	// Создаем context с таймаутом для предотвращения зависания
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	uploader := s3manager.NewUploaderWithClient(i.s3)
-	_, err := uploader.UploadWithContext(ctx, &s3manager.UploadInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		Body:        bytes.NewReader(resp.rawBytes),
-		ContentType: aws.String(contentType),
-	})
-
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			logger.Warn("таймаут кеширования в S3", zap.String("key", key))
-		} else {
-			logger.Error("ошибка кеширования в S3", zap.Error(err), zap.String("key", key))
+// isValidImageContentType проверяет content-type
+func (i *ImageService) isValidImageContentType(contentType string) bool {
+	ct := strings.ToLower(contentType)
+	validTypes := []string{"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml", "image/avif"}
+	for _, vt := range validTypes {
+		if strings.Contains(ct, vt) {
+			return true
 		}
-	} else {
-		logger.Debug("успешно сохранено в S3", zap.String("key", key))
 	}
-
-	logger.Info("изображение прокcировано", zap.String("url", url), zap.String("key", key))
+	return false
 }
 
 func isNotFoundError(err error) bool {
@@ -379,86 +388,6 @@ func (i *ImageService) deleteFromS3(bucket, key string) {
 	} else {
 		logger.Info("объект удален из S3", zap.String("key", key))
 	}
-}
-
-// isHTMLContent проверяет, является ли контент HTML
-func (i *ImageService) isHTMLContent(contentType string, bodyBytes []byte) bool {
-	// Проверяем Content-Type
-	if strings.Contains(strings.ToLower(contentType), "text/html") {
-		return true
-	}
-
-	// Проверяем начало содержимого
-	if len(bodyBytes) > 0 {
-		content := strings.ToLower(string(bodyBytes[:min(len(bodyBytes), 512)]))
-		if strings.Contains(content, "<html") || strings.Contains(content, "<!doctype html") {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isValidImageResponse проверяет, является ли ответ валидным изображением
-func (i *ImageService) isValidImageResponse(resp *ProxyResponse) bool {
-	if resp == nil || resp.rawBytes == nil || len(resp.rawBytes) == 0 {
-		return false
-	}
-
-	// Проверяем, что это не HTML
-	if i.isHTMLContent(resp.contentType, resp.rawBytes) {
-		return false
-	}
-
-	// Проверяем Content-Type на валидные типы изображений
-	contentType := strings.ToLower(resp.contentType)
-	validTypes := []string{"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml", "image/avif"}
-	for _, validType := range validTypes {
-		if strings.Contains(contentType, validType) {
-			return true
-		}
-	}
-
-	// Если Content-Type не задан, проверяем по сигнатуре файла
-	if contentType == "" || contentType == "application/octet-stream" {
-		return i.isValidImageBySignature(resp.rawBytes)
-	}
-
-	return false
-}
-
-// isValidImageBySignature проверяет сигнатуру файла
-func (i *ImageService) isValidImageBySignature(data []byte) bool {
-	if len(data) < 8 {
-		return false
-	}
-
-	// JPEG
-	if data[0] == 0xFF && data[1] == 0xD8 {
-		return true
-	}
-	// PNG
-	if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
-		return true
-	}
-	// GIF
-	if data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 {
-		return true
-	}
-	// WebP
-	if len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
-		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50 {
-		return true
-	}
-
-	return false
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // initFailedURLsFile инициализирует файл для записи неуспешных URL
