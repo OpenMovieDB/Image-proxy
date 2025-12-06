@@ -19,6 +19,9 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
+          env:
+            - name: RATE_LIMIT_MAX_REQUESTS
+              value: "50"
           envFrom:
             - secretRef:
                 name: image-proxy
