@@ -60,9 +60,12 @@ func NewImageService(s3 *s3.S3, c *config.Config, strategy *image.Strategy, logg
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
+				MaxIdleConns:          200,
+				MaxIdleConnsPerHost:   100,
+				MaxConnsPerHost:       0, // без лимита
+				IdleConnTimeout:       90 * time.Second,
+				DisableKeepAlives:     false,
+				ResponseHeaderTimeout: 10 * time.Second,
 			},
 		},
 		cacheSemaphore: make(chan struct{}, 50), // Ограничиваем до 50 одновременных операций кеширования
