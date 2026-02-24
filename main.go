@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -23,7 +26,6 @@ import (
 	"resizer/service"
 	"resizer/shared/log"
 	"resizer/shared/trace"
-	"time"
 )
 
 //	@title			OpenMovieDB Image Proxy service
@@ -56,10 +58,19 @@ func main() {
 		}
 	}()
 
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 100,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
 	awsSession, err := session.NewSession(&aws.Config{
 		Region:      aws.String(serviceConfig.S3Region),
 		Credentials: credentials.NewStaticCredentials(serviceConfig.S3AccessKey, serviceConfig.S3SecretKey, ""),
 		Endpoint:    &serviceConfig.S3Endpoint,
+		HTTPClient:  httpClient,
 	})
 	if err != nil {
 		logger.Error(err.Error())
@@ -88,7 +99,7 @@ func main() {
 				return true
 			},
 			ReadinessProbe: func(c *fiber.Ctx) bool {
-				return checkS3Health(s3Client, serviceConfig.S3Bucket)
+				return true
 			},
 		}),
 		swagger.New(swagger.Config{
@@ -109,12 +120,3 @@ func main() {
 	}
 }
 
-func checkS3Health(s3Client *s3.S3, bucket string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	_, err := s3Client.HeadBucketWithContext(ctx, &s3.HeadBucketInput{
-		Bucket: aws.String(bucket),
-	})
-	return err == nil
-}
