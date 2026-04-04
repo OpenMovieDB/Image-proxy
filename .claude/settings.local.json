@@ -19,7 +19,15 @@
       "Bash(kubectl get:*)",
       "Bash(kubectl logs:*)",
       "Bash(kubectl describe:*)",
-      "Bash(kubectl top:*)"
+      "Bash(kubectl top:*)",
+      "Bash(kubectl rollout:*)",
+      "Bash(go test:*)",
+      "Bash(git stash:*)",
+      "Bash(kubectl exec:*)",
+      "Bash(curl:*)",
+      "Bash(kubectl scale:*)",
+      "Bash(git push)",
+      "Bash(kubectl apply:*)"
     ],
     "deny": []
   }
