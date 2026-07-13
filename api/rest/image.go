@@ -3,16 +3,18 @@ package rest
 import (
 	"context"
 	"fmt"
-	"github.com/gofiber/fiber/v2"
-	"go.uber.org/zap"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"go.uber.org/zap"
+
 	"resizer/api/model"
 	"resizer/config"
 	"resizer/service"
 	"resizer/shared/log"
-	"strconv"
-	"time"
 )
 
 type ImageController struct {
@@ -26,7 +28,7 @@ func NewImageController(app *fiber.App, cfg *config.Config, service *service.Ima
 
 	app.Get("/images/:entity/:file/:width/:quality/:type", i.Process)
 	app.Get("/:service_type<regex(tmdb-images|kinopoisk-images|kinopoisk-ott-images|kinopoisk-st-images)>/*", i.Proxy)
-	
+
 	// Административные эндпоинты для управления битыми URL
 	app.Get("/admin/failed-urls", i.GetFailedURLs)
 	app.Delete("/admin/failed-urls", i.ClearFailedURLs)

@@ -2,8 +2,9 @@ package image
 
 import (
 	"context"
-	"github.com/h2non/bimg"
 	"io"
+
+	"github.com/h2non/bimg"
 )
 
 type Encoder interface {

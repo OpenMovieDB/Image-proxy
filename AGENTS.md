@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-04-02 | Updated: 2026-04-02 -->
+<!-- Generated: 2026-04-02 | Updated: 2026-05-09 -->
 
 # Image-proxy
 
 ## Purpose
-Image proxy and resize service for the PoisKino platform. Fetches images from S3 storage or external CDNs (TMDB, Kinopoisk/Yandex), transforms them using libvips via the bimg library, and serves the result over HTTP. S3 acts as a write-through cache for all proxied images. The service runs as a single Go binary with a Fiber v2 HTTP server.
+Image proxy and resize service for the PoiskKino platform. Fetches images from S3 storage or external CDNs (TMDB, Kinopoisk/Yandex), transforms them using libvips via the bimg library, and serves the result over HTTP. S3 acts as a write-through cache for all proxied images. The service runs as a single Go binary with a Fiber v2 HTTP server.
 
 ## Key Files
 | File | Description |

@@ -1,13 +1,14 @@
 package trace
 
 import (
+	"log/slog"
+
 	"go.opentelemetry.io/otel"
 	stdout "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
-	"log/slog"
 )
 
 func InitTrace() *sdktrace.TracerProvider {
@@ -22,7 +23,8 @@ func InitTrace() *sdktrace.TracerProvider {
 			resource.NewWithAttributes(
 				semconv.SchemaURL,
 				semconv.ServiceNameKey.String("image-proxy"),
-			)),
+			),
+		),
 	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))

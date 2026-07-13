@@ -1,9 +1,10 @@
 package config
 
 import (
-	"github.com/caarlos0/env/v8"
 	"log/slog"
 	"time"
+
+	"github.com/caarlos0/env/v8"
 )
 
 type Config struct {

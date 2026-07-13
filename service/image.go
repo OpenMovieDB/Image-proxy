@@ -183,7 +183,6 @@ func (i *ImageService) tryGetFromS3(ctx context.Context, bucket, key string) (*P
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +436,7 @@ func min(a, b int) int {
 
 // initFailedURLsFile инициализирует файл для записи неуспешных URL
 func (i *ImageService) initFailedURLsFile() {
-	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		i.logger.Error("не удалось создать файл для неуспешных URL", zap.Error(err))
 		return
@@ -491,7 +490,7 @@ func (i *ImageService) ClearFailedURLs() error {
 	}
 
 	// Создаем новый пустой файл
-	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile("failed_urls.txt", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}

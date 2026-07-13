@@ -1,9 +1,10 @@
 package image
 
 import (
+	"sync"
+
 	"go.uber.org/zap"
 	"resizer/converter/image/format"
-	"sync"
 )
 
 var (

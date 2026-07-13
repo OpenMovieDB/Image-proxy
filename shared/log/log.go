@@ -2,13 +2,14 @@ package log
 
 import (
 	"context"
+	"os"
+
 	"github.com/hyperdxio/opentelemetry-go/otelzap"
 	"github.com/hyperdxio/opentelemetry-logs-go/exporters/otlp/otlplogs"
 	sdk "github.com/hyperdxio/opentelemetry-logs-go/sdk/logs"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"os"
 )
 
 func InitLogger(ctx context.Context) *zap.Logger {

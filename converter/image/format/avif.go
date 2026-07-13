@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/h2non/bimg"
 	"go.uber.org/zap"
-	"io"
+
 	"resizer/shared/log"
 )
 

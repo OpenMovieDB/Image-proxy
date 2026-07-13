@@ -3,9 +3,11 @@ package format
 import (
 	"bytes"
 	"context"
+	"io"
+
 	"github.com/h2non/bimg"
 	"go.uber.org/zap"
-	"io"
+
 	"resizer/shared/log"
 )
 

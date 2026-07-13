@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -19,7 +20,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/hyperdxio/otel-config-go/otelconfig"
-	"log/slog"
+
 	"resizer/api/rest"
 	"resizer/config"
 	img "resizer/converter/image"
@@ -119,4 +120,3 @@ func main() {
 		return
 	}
 }
-

@@ -2,6 +2,7 @@ package model
 
 import (
 	"io"
+
 	"resizer/converter/image"
 )
 
